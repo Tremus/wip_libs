@@ -327,6 +327,7 @@ static unsigned _imgui_get_events(imgui_context* ctx, unsigned uid, bool hover, 
     bool is_dragging_over  = hover;
     is_dragging_over      &= is_dragging_something_else;
     is_dragging_over      &= (no_active_drag_over || should_steal_drag_over);
+    is_dragging_over      &= ctx->uid_drag_over != uid;
     if (is_dragging_over)
     {
         PW_ASSERT(ctx->uid_drag_over != uid);
