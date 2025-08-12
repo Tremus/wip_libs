@@ -968,7 +968,7 @@ void nvgArc(NVGcontext* ctx, float cx, float cy, float r, float a0, float a1, in
 
 // Creates new rectangle shaped sub-path.
 void nvgRect(NVGcontext* ctx, float x, float y, float w, float h);
-void nvgRect2(NVGcontext* ctx, float x, float y, float w, float h);
+void nvgRect2(NVGcontext* ctx, float left, float top, float right, float bottom);
 
 // Creates new rounded rectangle shaped sub-path.
 void nvgRoundedRect(NVGcontext* ctx, float x, float y, float w, float h, float r);
