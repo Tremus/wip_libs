@@ -302,7 +302,6 @@ typedef struct NVGstate
     NVGcompositeOperationState compositeOperation;
     int                        shapeAntiAlias;
     NVGpaint                   paint;
-    float                      strokeWidth;
     float                      miterLimit;
     int                        lineJoin;
     int                        lineCap;
@@ -817,9 +816,6 @@ static inline void nvgSetPaint(NVGcontext* ctx, NVGpaint paint)
 // Miter limit controls when a sharp corner is beveled.
 static inline void nvgSetMiterLimit(NVGcontext* ctx, float limit) { ctx->state.miterLimit = limit; }
 
-// Sets the stroke width of the stroke style.
-static inline void nvgSetStrokeWidth(NVGcontext* ctx, float size) { ctx->state.strokeWidth = size; }
-
 // Sets how the end of the line (cap) is drawn,
 // Can be one of: NVG_BUTT (default), NVG_ROUND, NVG_SQUARE.
 static inline void nvgSetLineCap(NVGcontext* ctx, int cap) { ctx->state.lineCap = cap; }
@@ -1006,7 +1002,7 @@ void nvgCircle(NVGcontext* ctx, float cx, float cy, float r);
 void nvgFill(NVGcontext* ctx);
 
 // Fills the current path with current stroke style.
-void nvgStroke(NVGcontext* ctx);
+void nvgStroke(NVGcontext* ctx, float stroke_width);
 
 //
 // Text

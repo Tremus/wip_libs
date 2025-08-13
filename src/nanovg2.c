@@ -398,7 +398,6 @@ void nvgReset(NVGcontext* ctx)
     nvgSetColour(ctx, nvgRGBA(0, 0, 0, 255));
     state->compositeOperation = nvg__compositeOperationState(NVG_SOURCE_OVER);
     state->shapeAntiAlias     = 1;
-    state->strokeWidth        = 1.0f;
     state->miterLimit         = 10.0f;
     state->lineCap            = NVG_BUTT;
     state->lineJoin           = NVG_MITER;
@@ -4314,7 +4313,7 @@ void nvgFill(NVGcontext* ctx)
     }
 }
 
-void nvgStroke(NVGcontext* ctx)
+void nvgStroke(NVGcontext* ctx, float stroke_width)
 {
     NVGstate* state = &ctx->state;
 
@@ -4322,7 +4321,7 @@ void nvgStroke(NVGcontext* ctx)
         return;
 
     float    scale             = nvg__getAverageScale(state->xform);
-    float    strokeWidth       = nvg__clampf(state->strokeWidth * scale, 0.0f, 200.0f);
+    float    strokeWidth       = nvg__clampf(stroke_width * scale, 0.0f, 200.0f);
     NVGpaint paint             = state->paint;
     float    expandFringeWidth = 0;
     int      i;
