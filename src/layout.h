@@ -60,23 +60,12 @@ static void layout_horizontal(imgui_rect* rects, int num_rects, float target_x, 
 
     total_width += padding * (num_rects - 1);
 
-    float x_acc;
-    switch (layout)
-    {
-    case LAYOUT_HL:
-        x_acc = target_x;
-        break;
-    case LAYOUT_HC:
-        x_acc = target_x - total_width * 0.5f;
-        break;
-    case LAYOUT_HR:
-        x_acc = target_x - total_width;
-        break;
-    default:
-        x_acc = 0;
-        xassert(false);
-        break;
-    }
+    xassert(layout == LAYOUT_HL || layout == LAYOUT_HC || layout == LAYOUT_HR);
+    float x_acc = target_x;
+    if (layout == LAYOUT_HC)
+        x_acc -= total_width * 0.5f;
+    if (layout == LAYOUT_HR)
+        x_acc -= total_width;
 
     for (imgui_rect* it = rects; it != rects + num_rects; it++)
     {
@@ -98,23 +87,12 @@ static void layout_vertical(imgui_rect* rects, int num_rects, float target_y, La
 
     total_height += padding * (num_rects - 1);
 
-    float y_acc;
-    switch (layout)
-    {
-    case LAYOUT_VT:
-        y_acc = target_y;
-        break;
-    case LAYOUT_VC:
-        y_acc = target_y - total_height * 0.5f;
-        break;
-    case LAYOUT_VB:
-        y_acc = target_y - total_height;
-        break;
-    default:
-        y_acc = 0;
-        xassert(false);
-        break;
-    }
+    xassert(layout == LAYOUT_VT || layout == LAYOUT_VC || layout == LAYOUT_VB);
+    float y_acc = target_y;
+    if (layout == LAYOUT_VC)
+        y_acc -= total_height * 0.5f;
+    if (layout == LAYOUT_VB)
+        y_acc -= total_height;
 
     for (imgui_rect* it = rects; it != rects + num_rects; it++)
     {
@@ -136,26 +114,14 @@ static void layout_uniform_horizontal(
     LayoutType  layout,
     float       padding)
 {
-    xassert(num_rects > 0);
     float total_width = target_width * num_rects + padding * (num_rects - 1);
 
-    float x_acc;
-    switch (layout)
-    {
-    case LAYOUT_HL:
-        x_acc = target_x;
-        break;
-    case LAYOUT_HC:
-        x_acc = target_x - total_width * 0.5f;
-        break;
-    case LAYOUT_HR:
-        x_acc = target_x - total_width;
-        break;
-    default:
-        x_acc = 0;
-        xassert(false);
-        break;
-    }
+    xassert(layout == LAYOUT_HL || layout == LAYOUT_HC || layout == LAYOUT_HR);
+    float x_acc = target_x;
+    if (layout == LAYOUT_HC)
+        x_acc -= total_width * 0.5f;
+    if (layout == LAYOUT_HR)
+        x_acc -= total_width;
 
     for (imgui_rect* it = rects; it != rects + num_rects; it++)
     {
@@ -178,26 +144,14 @@ static void layout_uniform_vertical(
     LayoutType  layout,
     float       padding)
 {
-    xassert(num_rects > 0);
     float total_height = target_height * num_rects + padding * (num_rects - 1);
 
-    float y_acc;
-    switch (layout)
-    {
-    case LAYOUT_VT:
-        y_acc = target_y;
-        break;
-    case LAYOUT_VC:
-        y_acc = target_y - total_height * 0.5f;
-        break;
-    case LAYOUT_VB:
-        y_acc = target_y - total_height;
-        break;
-    default:
-        y_acc = 0;
-        xassert(false);
-        break;
-    }
+    xassert(layout == LAYOUT_VT || layout == LAYOUT_VC || layout == LAYOUT_VB);
+    float y_acc = target_y;
+    if (layout == LAYOUT_VC)
+        y_acc -= total_height * 0.5f;
+    if (layout == LAYOUT_VB)
+        y_acc -= total_height;
 
     for (imgui_rect* it = rects; it != rects + num_rects; it++)
     {
