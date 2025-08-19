@@ -116,7 +116,6 @@ static void layout_horizontal_fill(imgui_rect* rects, int num_rects, LayoutType 
         if (layout == LAYOUT_SPACE_EVENLY)
             x += padding;
 
-        int i = 0;
         for (imgui_rect* it = rects; it != rects + num_rects; it++)
         {
             float w = (it->r - it->x);
@@ -124,8 +123,6 @@ static void layout_horizontal_fill(imgui_rect* rects, int num_rects, LayoutType 
             it->r   = x + w;
 
             x += w + padding;
-            xassert(it->r <= box->r);
-            i++;
         }
     }
 }
