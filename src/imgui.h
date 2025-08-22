@@ -587,11 +587,11 @@ static void imgui_send_event(imgui_context* ctx, const PWEvent* e)
         // ctx->mouse_drag_id       = 0;
 
         ctx->uid_mouse_over      = 0;
-        ctx->frame_id_mouse_over = 0;
         ctx->uid_mouse_hold      = 0;
         ctx->uid_drag            = 0;
         ctx->uid_drag_over       = 0;
         ctx->uid_touchpad        = 0;
+        ctx->mouse_hold_type     = IMGUI_MOUSE_BUTTON_NONE;
         ctx->mouse_inside_window = false;
         break;
     case PW_EVENT_MOUSE_ENTER:
