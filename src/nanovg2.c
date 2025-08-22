@@ -3880,6 +3880,76 @@ void nvgBeginFrame(NVGcontext* ctx, float devicePixelRatio)
     nvg__setDevicePixelRatio(ctx, devicePixelRatio);
 }
 
+int snvg_comsume_commands(NVGcontext* ctx, SGNVGcommand* cmd)
+{
+    int ncommands = 0;
+    while (cmd != NULL)
+    {
+        switch (cmd->type)
+        {
+        case SGNVG_CMD_BEGIN_PASS:
+        {
+            SGNVGcommandBeginPass* p = cmd->payload.beginPass;
+
+            sg_begin_pass(&p->pass);
+
+            ctx->view.viewSize[0] = p->width;
+            ctx->view.viewSize[1] = p->height;
+
+            break;
+        }
+        case SGNVG_CMD_END_PASS:
+            sg_end_pass();
+            break;
+        case SGNVG_CMD_DRAW_NVG:
+        {
+            SGNVGcommandNVG* draws = cmd->payload.drawNVG;
+
+            SGNVGcall* call = draws->calls;
+            int        i;
+
+            for (i = 0; i < draws->num_calls && call != NULL; i++)
+            {
+                ctx->blend.src_factor_rgb   = call->blendFunc.srcRGB;
+                ctx->blend.dst_factor_rgb   = call->blendFunc.dstRGB;
+                ctx->blend.src_factor_alpha = call->blendFunc.srcAlpha;
+                ctx->blend.dst_factor_alpha = call->blendFunc.dstAlpha;
+                ctx->pipelineCacheIndex     = sgnvg__getIndexFromCache(ctx, sgnvg__getCombinedBlendNumber(ctx->blend));
+                if (call->type == SGNVG_FILL)
+                    sgnvg__fill(ctx, call);
+                else if (call->type == SGNVG_CONVEXFILL)
+                    sgnvg__convexFill(ctx, call);
+                else if (call->type == SGNVG_STROKE)
+                    sgnvg__stroke(ctx, call);
+                else if (call->type == SGNVG_TRIANGLES)
+                    sgnvg__triangles(ctx, call);
+
+                call = call->next;
+            }
+            NVG_ASSERT(i == draws->num_calls && call == NULL); // Oh oh, you built the list wrong
+            break;
+        }
+        case SGNVG_CMD_IMAGE_FX:
+        {
+            SGNVGcommandImageFX* cmdfx = cmd->payload.fx;
+            void                 snvg__processImageFX(NVGcontext * ctx, SGNVGcommandImageFX * state);
+            snvg__processImageFX(ctx, cmdfx);
+            break;
+        }
+        case SGNVG_CMD_CUSTOM:
+        {
+            SGNVGcommandCustom* custom = cmd->payload.custom;
+            custom->func(custom->uptr);
+            break;
+        }
+        }
+
+        cmd = cmd->next;
+        ncommands++;
+    }
+    return ncommands;
+}
+
 void nvgEndFrame(NVGcontext* ctx)
 {
     if (ctx->fontImageIdx != 0)
@@ -3965,72 +4035,7 @@ void nvgEndFrame(NVGcontext* ctx)
     // upload index data
     sg_update_buffer(ctx->indexBuf, &(sg_range){ctx->indexes, ctx->nindexes * sizeof(*ctx->indexes)});
 
-    int           ncommands = 0;
-    SGNVGcommand* cmd       = ctx->first_command;
-    while (cmd != NULL)
-    {
-        switch (cmd->type)
-        {
-        case SGNVG_CMD_BEGIN_PASS:
-        {
-            SGNVGcommandBeginPass* p = cmd->payload.beginPass;
-
-            sg_begin_pass(&p->pass);
-
-            ctx->view.viewSize[0] = p->width;
-            ctx->view.viewSize[1] = p->height;
-
-            break;
-        }
-        case SGNVG_CMD_END_PASS:
-            sg_end_pass();
-            break;
-        case SGNVG_CMD_DRAW_NVG:
-        {
-            SGNVGcommandNVG* draws = cmd->payload.drawNVG;
-
-            SGNVGcall* call = draws->calls;
-            int        i;
-
-            for (i = 0; i < draws->num_calls && call != NULL; i++)
-            {
-                ctx->blend.src_factor_rgb   = call->blendFunc.srcRGB;
-                ctx->blend.dst_factor_rgb   = call->blendFunc.dstRGB;
-                ctx->blend.src_factor_alpha = call->blendFunc.srcAlpha;
-                ctx->blend.dst_factor_alpha = call->blendFunc.dstAlpha;
-                ctx->pipelineCacheIndex     = sgnvg__getIndexFromCache(ctx, sgnvg__getCombinedBlendNumber(ctx->blend));
-                if (call->type == SGNVG_FILL)
-                    sgnvg__fill(ctx, call);
-                else if (call->type == SGNVG_CONVEXFILL)
-                    sgnvg__convexFill(ctx, call);
-                else if (call->type == SGNVG_STROKE)
-                    sgnvg__stroke(ctx, call);
-                else if (call->type == SGNVG_TRIANGLES)
-                    sgnvg__triangles(ctx, call);
-
-                call = call->next;
-            }
-            NVG_ASSERT(i == draws->num_calls && call == NULL); // Oh oh, you built the list wrong
-            break;
-        }
-        case SGNVG_CMD_IMAGE_FX:
-        {
-            SGNVGcommandImageFX* cmdfx = cmd->payload.fx;
-            void                 snvg__processImageFX(NVGcontext * ctx, SGNVGcommandImageFX * state);
-            snvg__processImageFX(ctx, cmdfx);
-            break;
-        }
-        case SGNVG_CMD_CUSTOM:
-        {
-            SGNVGcommandCustom* custom = cmd->payload.custom;
-            custom->func(custom->uptr);
-            break;
-        }
-        }
-
-        cmd = cmd->next;
-        ncommands++;
-    }
+    int ncommands = snvg_comsume_commands(ctx, ctx->first_command);
 }
 
 static int sgnvg__maxVertCount(const NVGpath* paths, int npaths)

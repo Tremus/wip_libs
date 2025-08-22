@@ -70,6 +70,8 @@
 // - Add snvgCreateFramebuffer() & snvgDestroyFramebuffer()
 // - Move sampler support out of snvgCreateImageFromHandleSokol and into to NVGpaint
 // - Remove linear and mipmap image flags
+// - Add bloom and blur post processing effects
+// - Basic out of order rendering
 
 #ifndef NANOVG_H
 #define NANOVG_H
@@ -1171,6 +1173,38 @@ void snvg_command_fx(
     SGNVGimageFX*     fx,
     const char*       label);
 void snvg_command_custom(NVGcontext* ctx, void* uptr, SGNVGcustomFunc func, const char* label);
+
+typedef struct SNVGcallState
+{
+    SGNVGcall* start;
+    SGNVGcall* end;
+    int        count;
+} SNVGcallState;
+
+static SNVGcallState snvg_calls_pop(NVGcontext* ctx)
+{
+    SNVGcallState calls;
+    calls.start                      = ctx->current_nvg_draw->calls;
+    calls.end                        = ctx->current_call;
+    calls.count                      = ctx->current_nvg_draw->num_calls;
+    ctx->current_nvg_draw->calls     = NULL;
+    ctx->current_call                = NULL;
+    ctx->current_nvg_draw->num_calls = 0;
+    return calls;
+}
+static void snvg_calls_set(NVGcontext* ctx, const SNVGcallState* calls)
+{
+    ctx->current_nvg_draw->calls     = calls->start;
+    ctx->current_nvg_draw->num_calls = calls->count;
+    ctx->current_call                = calls->end;
+}
+static void snvg_calls_join(NVGcontext* ctx, const SNVGcallState* calls)
+{
+    if (ctx->current_call)
+        ctx->current_call->next = calls->start;
+    ctx->current_call                 = calls->end;
+    ctx->current_nvg_draw->num_calls += calls->count;
+}
 
 #ifdef _MSC_VER
 #pragma warning(pop)
