@@ -216,3 +216,62 @@ static void layout_uniform_vertical(
         y_acc += target_height + padding;
     }
 }
+
+static float layout_calc_size(int num_elements, LayoutType layout, float padding, float distance)
+{
+    float size               = 0;
+    int   padding_multiplier = num_elements;
+    if (padding_multiplier == LAYOUT_SPACE_BETWEEN)
+        padding_multiplier--;
+    if (layout == LAYOUT_SPACE_EVENLY)
+        padding_multiplier++;
+
+    float total_padding      = padding * padding_multiplier;
+    float available_distance = distance - total_padding;
+    return available_distance / num_elements;
+}
+
+static void layout_grid(
+    imgui_rect*       rects,
+    int               num_rects,
+    int               num_cols,
+    int               num_rows,
+    LayoutType        layout,
+    float             padding,
+    const imgui_rect* box)
+{
+    xassert((num_rows * num_cols) <= num_rects);
+    float ele_w = layout_calc_size(num_cols, layout, padding, box->r - box->x);
+    float ele_h = layout_calc_size(num_rows, layout, padding, box->b - box->y);
+
+    float start_x = box->x; // default space between
+    float y       = box->y;
+    if (layout == LAYOUT_SPACE_AROUND)
+    {
+        start_x += padding * 0.5f;
+        y       += padding * 0.5f;
+    }
+    if (layout == LAYOUT_SPACE_EVENLY)
+    {
+        start_x += padding;
+        y       += padding;
+    }
+
+    int idx = 0;
+    for (int i = 0; i < num_rows; i++)
+    {
+        float x = start_x;
+        for (int j = 0; j < num_cols; j++, idx++)
+        {
+            imgui_rect* r = rects + idx;
+            r->x          = x;
+            r->y          = y;
+            r->r          = x + ele_w;
+            r->b          = y + ele_h;
+
+            x += ele_w + padding;
+        }
+
+        y += ele_h + padding;
+    }
+}
