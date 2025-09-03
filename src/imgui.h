@@ -632,7 +632,7 @@ static void imgui_send_event(imgui_context* ctx, const PWEvent* e)
         else if (e->type == PW_EVENT_MOUSE_MIDDLE_DOWN)
             btn_type = IMGUI_MOUSE_BUTTON_MIDDLE;
 
-        if (ctx->frame.type_mouse_down == IMGUI_MOUSE_BUTTON_NONE || ctx->frame.type_mouse_down == btn_type)
+        if (ctx->mouse_hold_type == IMGUI_MOUSE_BUTTON_NONE || ctx->mouse_hold_type == btn_type)
         {
             const bool valid_state_1 = ctx->uid_mouse_hold == 0 && ctx->mouse_hold_type == IMGUI_MOUSE_BUTTON_NONE;
             const bool valid_state_2 = ctx->uid_mouse_hold != 0 && ctx->mouse_hold_type == IMGUI_MOUSE_BUTTON_NONE;
