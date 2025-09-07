@@ -155,6 +155,52 @@ static void layout_vertical(imgui_rect* rects, int num_rects, LayoutType layout,
     }
 }
 
+static void layout_vertical_fill(imgui_rect* rects, int num_rects, LayoutType layout, const imgui_rect* box)
+{
+    xassert(num_rects > 0);
+    xassert(layout == LAYOUT_SPACE_EVENLY || layout == LAYOUT_SPACE_AROUND || layout == LAYOUT_SPACE_BETWEEN);
+
+    float total_content_height = 0;
+    for (imgui_rect* it = rects; it != rects + num_rects; it++)
+        total_content_height += (it->b - it->y);
+
+    const float box_height = box->b - box->y;
+    xassert(total_content_height <= box_height); // Oops, you ran out of space!
+
+    if (num_rects == 1)
+    {
+        // Centre content
+        rects->y = box->y + box_height * 0.5f - total_content_height * -0.5f;
+        rects->b = box->y + box_height * 0.5f - total_content_height;
+    }
+    else
+    {
+        const float available_padding = box_height - total_content_height;
+        float       padding           = 0;
+        int         padding_denom     = num_rects;
+        if (layout == LAYOUT_SPACE_BETWEEN)
+            padding_denom--;
+        if (layout == LAYOUT_SPACE_EVENLY)
+            padding_denom++;
+        padding = available_padding / (float)padding_denom;
+
+        float y = box->y; // default space between
+        if (layout == LAYOUT_SPACE_AROUND)
+            y += padding * 0.5f;
+        if (layout == LAYOUT_SPACE_EVENLY)
+            y += padding;
+
+        for (imgui_rect* it = rects; it != rects + num_rects; it++)
+        {
+            float h = (it->b - it->y);
+            it->y   = y;
+            it->b   = y + h;
+
+            y += h + padding;
+        }
+    }
+}
+
 // Fixed padding. Sets sizes
 static void layout_uniform_horizontal(
     imgui_rect* rects,
