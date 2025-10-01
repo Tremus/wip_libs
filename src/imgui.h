@@ -22,12 +22,18 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <stdbool.h>
 #include <string.h>
 
-typedef struct imgui_rect
+#if defined(_MSC_VER)
+#define IM_ALIGN(a) __declspec(align(a))
+#else
+#define IM_ALIGN(a) __attribute__((aligned(a)))
+#endif
+
+IM_ALIGN(8) typedef struct imgui_rect
 {
     float x, y, r, b;
 } imgui_rect;
 
-typedef struct imgui_pt
+IM_ALIGN(8) typedef struct imgui_pt
 {
     float x, y;
 } imgui_pt;
