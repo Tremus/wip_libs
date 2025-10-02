@@ -26,15 +26,26 @@ https://github.com/RandyGaul/cute_headers/blob/71928ed90d7b9745bcc3320ab438cf4a0
 
 I used the code from mid 2024. At some point I fixed at least 2 bugs from that library but unfortunately I forgot what
 they were. The nice thing to do would have been to create a github issue and help fix Randys lib, but I was in too much
-of a hurry at that time. Hopefully Randy or someone else has reported those issues fix it.
+of a hurry at that time. Hopefully Randy has already found & fixed the problems, or someone else reported it...
 From memory, the Windows bugs were:
 1. Contacting some hosts (amazon.com IIRC) sometimes returned partial respones. The bug was some encrypted data in some
-buffer still needed to be processed, and the bug was some conditon somewhere in a loop.
+buffer still needed to be processed, and the bug was some conditon somewhere in a loop. I forgot where...
 2. A user of one of my products to fail to establish a connection. The probem was `socket(AF_INET, SOCK_STREAM, 0)`
 needed to be `socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)`. I haven't been able to reproduce this error on my machine, but
 it appeared to fix this users problems.
 With these settings I haven't had any more Windows problems in almost a year.
 I don't recall ever having a user report a bug on OSX.
+
+COMPILING:
+Add "#define XHL_REQUEST_IMPL" before including in **only one** of your source files
+
+LINKING:
+Windows: -lSecur32 -lWs2_32
+macOS: -framework Security
+
+SUPPORT:
+Windows: 8.1+
+macOS: 10.2+
 */
 
 // Return non zero to cancel request/response
@@ -719,7 +730,7 @@ int tls_connect(TLS_Context* ctx, const char* hostname, int port, void* userptr,
         sizeof(HostName) / sizeof(HostName[0]));
     if (NumChars == 0)
     {
-        XREQ_LOGERROR("[TLS] Error - Failed converting hostname to UTF16", err);
+        XREQ_LOGERROR("[TLS] Error - Failed converting hostname to UTF16");
     }
 
     // Initialize winsock.
