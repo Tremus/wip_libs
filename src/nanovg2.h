@@ -1148,6 +1148,8 @@ int nvgTextBreakLines(
     NVGtextRow* rows,
     int         maxRows);
 
+sg_image sg_make_image_with_mipmaps(const sg_image_desc* desc_);
+
 int snvgCreateImageFromHandleSokol(NVGcontext* ctx, sg_image imageSokol, enum NVGtexture type, int w, int h, int flags);
 
 SGNVGframebuffer snvgCreateFramebuffer(NVGcontext* ctx, int width, int height);

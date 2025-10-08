@@ -4493,6 +4493,117 @@ void nvg__renderText(NVGcontext* ctx, NVGvertex* verts, int nverts)
     ctx->textTriCount += nverts / 3;
 }
 
+// Source: https://github.com/floooh/sokol/issues/102
+sg_image sg_make_image_with_mipmaps(const sg_image_desc* desc_)
+{
+    sg_image_desc desc = *desc_;
+    NVG_ASSERT(
+        desc.pixel_format == SG_PIXELFORMAT_RGBA8 || desc.pixel_format == SG_PIXELFORMAT_BGRA8 ||
+        desc.pixel_format == SG_PIXELFORMAT_R8);
+
+    unsigned num_channels = 1;
+    if (desc.pixel_format == SG_PIXELFORMAT_RGBA8 || desc.pixel_format == SG_PIXELFORMAT_BGRA8)
+        num_channels = 4;
+
+    int w          = desc.width;
+    int h          = desc.height * desc.num_slices;
+    int total_size = 0;
+
+    int max_mipmap_levels = desc.num_mipmaps;
+    if (max_mipmap_levels < 1)
+        max_mipmap_levels = 1;
+    if (max_mipmap_levels > SG_MAX_MIPMAPS)
+        max_mipmap_levels = SG_MAX_MIPMAPS;
+
+    for (int level = 1; level < max_mipmap_levels; ++level)
+    {
+        w /= 2;
+        h /= 2;
+
+        if (w < 1 || h < 1)
+            break;
+
+        total_size += (w * h * num_channels);
+    }
+
+    int cube_faces = 0;
+    for (; cube_faces < SG_CUBEFACE_NUM; ++cube_faces)
+    {
+        if (!desc.data.subimage[cube_faces][0].ptr)
+            break;
+    }
+
+    total_size                *= (cube_faces + 1);
+    unsigned char* big_target  = NVG_MALLOC(total_size);
+    unsigned char* target      = big_target;
+
+    for (int cube_face = 0; cube_face < cube_faces; ++cube_face)
+    {
+        int target_width  = desc.width;
+        int target_height = desc.height;
+        int dst_height    = target_height * desc.num_slices;
+
+        for (int level = 1; level < max_mipmap_levels; ++level)
+        {
+            unsigned char* src = (unsigned char*)desc.data.subimage[cube_face][level - 1].ptr;
+            if (!src)
+                break;
+
+            int src_w      = target_width;
+            int src_h      = target_height;
+            target_width  /= 2;
+            target_height /= 2;
+            if (target_width < 1 && target_height < 1)
+                break;
+
+            if (target_width < 1)
+                target_width = 1;
+
+            if (target_height < 1)
+                target_height = 1;
+
+            dst_height               /= 2;
+            unsigned       img_size   = target_width * dst_height * num_channels;
+            unsigned char* miptarget  = target;
+
+            for (int slice = 0; slice < desc.num_slices; ++slice)
+            {
+                for (int x = 0; x < target_width; ++x)
+                {
+                    for (int y = 0; y < target_height; ++y)
+                    {
+                        for (int ch = 0; ch < num_channels; ++ch)
+                        {
+                            int col = 0;
+                            int sx  = x * 2;
+                            int sy  = y * 2;
+
+                            col += src[(sy * src_w + sx) * num_channels + ch];
+                            col += src[(sy * src_w + (sx + 1)) * num_channels + ch];
+                            col += src[((sy + 1) * src_w + (sx + 1)) * num_channels + ch];
+                            col += src[((sy + 1) * src_w + sx) * num_channels + ch];
+                            col /= 4;
+                            miptarget[(y * target_width + x) * num_channels + ch] = (uint8_t)col;
+                        }
+                    }
+                }
+
+                src       += (src_w * src_h * num_channels);
+                miptarget += (target_width * target_height * num_channels);
+            }
+            desc.data.subimage[cube_face][level].ptr   = target;
+            desc.data.subimage[cube_face][level].size  = img_size;
+            target                                    += img_size;
+            if (desc.num_mipmaps <= level)
+                desc.num_mipmaps = level + 1;
+        }
+    }
+
+    sg_image img = sg_make_image(&desc);
+    NVG_FREE(big_target);
+    return img;
+}
+
 int snvgCreateImageFromHandleSokol(NVGcontext* ctx, sg_image imageSokol, enum NVGtexture type, int w, int h, int flags)
 {
     SGNVGtexture* tex = sgnvg__allocTexture(ctx);
