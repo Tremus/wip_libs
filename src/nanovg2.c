@@ -279,8 +279,43 @@ void nvg__renderText(NVGcontext* ctx, NVGvertex* verts, int nverts);
 
 static float nvg__sqrtf(float a) { return sqrtf(a); }
 static float nvg__modf(float a, float b) { return fmodf(a, b); }
-static float nvg__sinf(float a) { return sinf(a); }
-static float nvg__cosf(float a) { return cosf(a); }
+
+// Paul Minieros fastersin approximation
+// Fairly accurate for our scenario. In small WIP plugins I'm noticing an 8% speed up in the GUI. That's a lot for
+// simply replacing 1 scientific function.
+static float nvg__sinf(float x)
+{
+    int   k    = (int)(x * 0.15915494309189534f);
+    float half = (x < 0) ? -0.5f : 0.5f;
+    float x2   = ((half + k) * 6.283185307179586f - x);
+
+    union nvg_fi32
+    {
+        float    f;
+        int32_t  i32;
+        uint32_t u32;
+    };
+
+    static const float fouroverpi   = 1.2732395447351627f;
+    static const float fouroverpisq = 0.40528473456935109f;
+    static const float q            = 0.77633023248007499f;
+
+    union nvg_fi32 p     = {.f = 0.22308510060189463f};
+    union nvg_fi32 vx    = {.f = x2};
+    uint32_t       sign  = vx.u32 & 0x80000000;
+    vx.u32              &= 0x7FFFFFFF;
+
+    float qpprox = fouroverpi * x2 - fouroverpisq * x2 * vx.f;
+
+    p.u32 |= sign;
+
+    float v = qpprox * (q + p.f * qpprox);
+    NVG_ASSERT(v >= -1 && v <= 1);
+    return v;
+}
+static float nvg__cosf(float x) { return nvg__sinf(x + 1.5707963267948966f); }
+// static float nvg__sinf(float a) { return sinf(a); }
+// static float nvg__cosf(float a) { return cosf(a); }
 static float nvg__tanf(float a) { return tanf(a); }
 static float nvg__atan2f(float a, float b) { return atan2f(a, b); }
 static float nvg__acosf(float a) { return acosf(a); }
@@ -1423,8 +1458,8 @@ static NVGvertex* nvg__roundJoin(
         {
             float u  = i / (float)(n - 1);
             float a  = a0 + u * (a1 - a0);
-            float rx = p1->x + cosf(a) * rw;
-            float ry = p1->y + sinf(a) * rw;
+            float rx = p1->x + nvg__cosf(a) * rw;
+            float ry = p1->y + nvg__sinf(a) * rw;
             nvg__vset(dst, p1->x, p1->y, 0.5f, 1);
             dst++;
             nvg__vset(dst, rx, ry, ru, 1);
@@ -1455,8 +1490,8 @@ static NVGvertex* nvg__roundJoin(
         {
             float u  = i / (float)(n - 1);
             float a  = a0 + u * (a1 - a0);
-            float lx = p1->x + cosf(a) * lw;
-            float ly = p1->y + sinf(a) * lw;
+            float lx = p1->x + nvg__cosf(a) * lw;
+            float ly = p1->y + nvg__sinf(a) * lw;
             nvg__vset(dst, lx, ly, lu, 1);
             dst++;
             nvg__vset(dst, p1->x, p1->y, 0.5f, 1);
@@ -1628,7 +1663,7 @@ nvg__roundCapStart(NVGvertex* dst, NVGpoint* p, float dx, float dy, float w, int
     for (i = 0; i < ncap; i++)
     {
         float a  = i / (float)(ncap - 1) * NVG_PI;
-        float ax = cosf(a) * w, ay = sinf(a) * w;
+        float ax = nvg__cosf(a) * w, ay = nvg__sinf(a) * w;
         nvg__vset(dst, px - dlx * ax - dx * ay, py - dly * ax - dy * ay, u0, 1);
         dst++;
         nvg__vset(dst, px, py, 0.5f, 1);
@@ -1657,7 +1692,7 @@ nvg__roundCapEnd(NVGvertex* dst, NVGpoint* p, float dx, float dy, float w, int n
     for (i = 0; i < ncap; i++)
     {
         float a  = i / (float)(ncap - 1) * NVG_PI;
-        float ax = cosf(a) * w, ay = sinf(a) * w;
+        float ax = nvg__cosf(a) * w, ay = nvg__sinf(a) * w;
         nvg__vset(dst, px, py, 0.5f, 1);
         dst++;
         nvg__vset(dst, px - dlx * ax + dx * ay, py - dly * ax + dy * ay, u0, 1);
@@ -2163,6 +2198,8 @@ void nvgArc(NVGcontext* ctx, float cx, float cy, float r, float a0, float a1, in
 
     // Clamp angles
     da = a1 - a0;
+    if (da == 0)
+        return;
     if (dir == NVG_CW)
     {
         if (nvg__absf(da) >= NVG_PI * 2)
