@@ -283,39 +283,42 @@ static float nvg__modf(float a, float b) { return fmodf(a, b); }
 // Paul Minieros fastersin approximation
 // Fairly accurate for our scenario. In small WIP plugins I'm noticing an 8% speed up in the GUI. That's a lot for
 // simply replacing 1 scientific function.
-static float nvg__sinf(float x)
-{
-    int   k    = (int)(x * 0.15915494309189534f);
-    float half = (x < 0) ? -0.5f : 0.5f;
-    float x2   = ((half + k) * 6.283185307179586f - x);
+// Update: Every now an then I get a gnarly jitter on the screen. The offending code looks like its happening in
+// nvgArc().
+// TODO: detect and fix any instabilities inside these nvgArc()
+// static float nvg__sinf(float x)
+// {
+//     int   k    = (int)(x * 0.15915494309189534f);
+//     float half = (x < 0) ? -0.5f : 0.5f;
+//     float x2   = ((half + k) * 6.283185307179586f - x);
 
-    union nvg_fi32
-    {
-        float    f;
-        int32_t  i32;
-        uint32_t u32;
-    };
+//     union nvg_fi32
+//     {
+//         float    f;
+//         int32_t  i32;
+//         uint32_t u32;
+//     };
 
-    static const float fouroverpi   = 1.2732395447351627f;
-    static const float fouroverpisq = 0.40528473456935109f;
-    static const float q            = 0.77633023248007499f;
+//     static const float fouroverpi   = 1.2732395447351627f;
+//     static const float fouroverpisq = 0.40528473456935109f;
+//     static const float q            = 0.77633023248007499f;
 
-    union nvg_fi32 p     = {.f = 0.22308510060189463f};
-    union nvg_fi32 vx    = {.f = x2};
-    uint32_t       sign  = vx.u32 & 0x80000000;
-    vx.u32              &= 0x7FFFFFFF;
+//     union nvg_fi32 p     = {.f = 0.22308510060189463f};
+//     union nvg_fi32 vx    = {.f = x2};
+//     uint32_t       sign  = vx.u32 & 0x80000000;
+//     vx.u32              &= 0x7FFFFFFF;
 
-    float qpprox = fouroverpi * x2 - fouroverpisq * x2 * vx.f;
+//     float qpprox = fouroverpi * x2 - fouroverpisq * x2 * vx.f;
 
-    p.u32 |= sign;
+//     p.u32 |= sign;
 
-    float v = qpprox * (q + p.f * qpprox);
-    NVG_ASSERT(v >= -1 && v <= 1);
-    return v;
-}
-static float nvg__cosf(float x) { return nvg__sinf(x + 1.5707963267948966f); }
-// static float nvg__sinf(float a) { return sinf(a); }
-// static float nvg__cosf(float a) { return cosf(a); }
+//     float v = qpprox * (q + p.f * qpprox);
+//     NVG_ASSERT(v >= -1 && v <= 1);
+//     return v;
+// }
+// static float nvg__cosf(float x) { return nvg__sinf(x + 1.5707963267948966f); }
+static float nvg__sinf(float a) { return sinf(a); }
+static float nvg__cosf(float a) { return cosf(a); }
 static float nvg__tanf(float a) { return tanf(a); }
 static float nvg__atan2f(float a, float b) { return atan2f(a, b); }
 static float nvg__acosf(float a) { return acosf(a); }
