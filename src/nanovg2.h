@@ -134,7 +134,7 @@ typedef struct NVGpaint
     float      feather;
     NVGcolour  innerColour;
     NVGcolour  outerColour;
-    sg_image   image;
+    sg_view    texview;
     sg_sampler smp;
 } NVGpaint;
 
@@ -364,6 +364,7 @@ enum SGNVGshaderType
 typedef struct SGNVGtexture
 {
     sg_image img;
+    sg_view  texview;
     int      type;
     int      width, height;
     int      flags;
@@ -372,12 +373,15 @@ typedef struct SGNVGtexture
 
 typedef struct SGNVGframebuffer
 {
-    sg_image       img;
-    sg_image       depth;
-    sg_attachments att;
-    int            width;
-    int            height;
-    float          devicePixelRatio;
+    sg_image img;
+    sg_view  img_colview;
+    sg_view  img_texview;
+    sg_image depth;
+    sg_view  depth_view;
+
+    int   width;
+    int   height;
+    float devicePixelRatio;
 } SGNVGframebuffer;
 
 typedef struct SGNVGimageFX
@@ -490,7 +494,7 @@ typedef struct SGNVGpipelineCache
 typedef struct SGNVGcall
 {
     int        type;
-    int        image;
+    sg_view    texview;
     sg_sampler smp;
     int        triangleOffset;
     int        triangleCount;
@@ -638,7 +642,8 @@ typedef struct NVGcontext
     int            pipelineCacheIndex;
     sg_blend_state blend;
 
-    int dummyTex;
+    int     dummyTex;
+    sg_view dummyTexView;
 } NVGcontext;
 
 NVGcontext* nvgCreateContext(int flags);
@@ -892,7 +897,7 @@ NVGpaint nvgImagePattern(
     float       w,
     float       h,
     float       angle, // angle rotation around the top-left corner
-    sg_image    image,
+    sg_view     texview,
     float       alpha,
     sg_sampler  smp);
 

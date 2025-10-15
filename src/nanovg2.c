@@ -763,7 +763,10 @@ void nvgDeleteImage(NVGcontext* ctx, int image)
         if (tex->img.id == image)
         {
             if (tex->img.id != 0 && (tex->flags & NVG_IMAGE_NODELETE) == 0)
+            {
+                sg_destroy_view(tex->texview);
                 sg_destroy_image(tex->img);
+            }
             if (tex->imgData)
             {
                 NVG_FREE(tex->imgData);
@@ -874,7 +877,7 @@ NVGpaint nvgImagePattern(
     float       w,
     float       h,
     float       angle,
-    sg_image    image,
+    sg_view     texview,
     float       alpha,
     sg_sampler  smp)
 {
@@ -889,8 +892,8 @@ NVGpaint nvgImagePattern(
     p.extent[0] = w;
     p.extent[1] = h;
 
-    p.image = image;
-    p.smp   = smp;
+    p.texview = texview;
+    p.smp     = smp;
 
     p.innerColour = p.outerColour = nvgRGBAf(1, 1, 1, alpha);
 
@@ -3559,32 +3562,28 @@ static sg_pipeline sgnvg__getPipelineFromCache(NVGcontext* ctx, enum SGNVGpipeli
 static void sgnvg__preparePipelineUniforms(
     NVGcontext*            ctx,
     SGNVGfragUniforms*     uniforms,
-    int                    image_id,
+    sg_view                texview,
     sg_sampler             smp,
     enum SGNVGpipelineType pipelineType)
 {
-    sg_pipeline   pip = sgnvg__getPipelineFromCache(ctx, pipelineType);
-    SGNVGtexture* tex = NULL;
+    sg_pipeline pip = sgnvg__getPipelineFromCache(ctx, pipelineType);
+    // SGNVGtexture* tex = NULL;
 
     sg_apply_pipeline(pip);
 
     sg_apply_uniforms(UB_nanovg_viewSize, &(sg_range){&ctx->view, sizeof(ctx->view)});
     sg_apply_uniforms(UB_nanovg_frag, &(sg_range){uniforms, sizeof(*uniforms)});
 
-    if (image_id != 0)
-    {
-        tex = sgnvg__findTexture(ctx, image_id);
-    }
     // If no image is set, use empty texture
-    if (tex == NULL)
-    {
-        tex = sgnvg__findTexture(ctx, ctx->dummyTex);
+    if (texview.id == 0)
+        texview = ctx->dummyTexView;
+    if (smp.id == 0)
         smp = ctx->sampler_nearest;
-    }
+
     sg_apply_bindings(&(sg_bindings){
         .vertex_buffers[0]        = ctx->vertBuf,
         .index_buffer             = ctx->indexBuf,
-        .images[IMG_nanovg_tex]   = tex ? tex->img : (sg_image){0},
+        .views[VIEW_nanovg_tex]   = texview,
         .samplers[SMP_nanovg_smp] = smp,
     });
 }
@@ -3610,7 +3609,7 @@ int nvgCreateTexture(NVGcontext* ctx, enum NVGtexture type, int w, int h, int im
     sg_image_data imageData = {0};
     if (data)
     {
-        imageData.subimage[0][0] = (sg_range){data, w * h * nchannels};
+        imageData.mip_levels[0] = (sg_range){data, w * h * nchannels};
     }
     tex->img = sg_make_image(&(sg_image_desc){
         .type                 = SG_IMAGETYPE_2D,
@@ -3633,6 +3632,7 @@ int nvgCreateTexture(NVGcontext* ctx, enum NVGtexture type, int w, int h, int im
         memcpy(tex->imgData, data, w * h * nchannels);
         tex->flags |= NVG_IMAGE_DIRTY;
     }
+    tex->texview = sg_make_view(&(sg_view_desc){.texture = tex->img});
 
     return tex->img.id;
 }
@@ -3753,9 +3753,13 @@ static int sgnvg__convertPaint(
     frag->strokeMult = (width * 0.5f + fringe * 0.5f) / fringe;
     frag->strokeThr  = strokeThr;
 
-    if (paint->image.id != 0)
+    sg_image img_search = {0};
+    if (paint->texview.id != 0)
+        img_search = sg_query_view_image(paint->texview);
+
+    if (img_search.id != 0)
     {
-        tex = sgnvg__findTexture(ctx, paint->image.id);
+        tex = sgnvg__findTexture(ctx, img_search.id);
         if (tex == NULL)
             return 0;
 
@@ -3785,19 +3789,19 @@ static void sgnvg__fill(NVGcontext* ctx, SGNVGcall* call)
     SGNVGpath* paths = call->paths;
     int        i, npaths = call->num_paths;
 
-    sgnvg__preparePipelineUniforms(ctx, call->uniforms, 0, (sg_sampler){0}, SGNVG_PIP_FILL_STENCIL);
+    sgnvg__preparePipelineUniforms(ctx, call->uniforms, (sg_view){0}, (sg_sampler){0}, SGNVG_PIP_FILL_STENCIL);
     for (i = 0; i < npaths; i++)
         sg_draw(paths[i].fillOffset, paths[i].fillCount, 1);
 
     // if (ctx->flags & NVG_ANTIALIAS) {
-    sgnvg__preparePipelineUniforms(ctx, call->uniforms + 1, call->image, call->smp, SGNVG_PIP_FILL_ANTIALIAS);
+    sgnvg__preparePipelineUniforms(ctx, call->uniforms + 1, call->texview, call->smp, SGNVG_PIP_FILL_ANTIALIAS);
     // Draw fringes
     for (i = 0; i < npaths; i++)
         sg_draw(paths[i].strokeOffset, paths[i].strokeCount, 1);
     // }
 
     // Draw fill
-    sgnvg__preparePipelineUniforms(ctx, call->uniforms + 1, call->image, call->smp, SGNVG_PIP_FILL_DRAW);
+    sgnvg__preparePipelineUniforms(ctx, call->uniforms + 1, call->texview, call->smp, SGNVG_PIP_FILL_DRAW);
     sg_draw(call->triangleOffset, call->triangleCount, 1);
 }
 
@@ -3806,7 +3810,7 @@ static void sgnvg__convexFill(NVGcontext* ctx, SGNVGcall* call)
     SGNVGpath* paths = call->paths;
     int        i, npaths = call->num_paths;
 
-    sgnvg__preparePipelineUniforms(ctx, call->uniforms, call->image, call->smp, SGNVG_PIP_BASE);
+    sgnvg__preparePipelineUniforms(ctx, call->uniforms, call->texview, call->smp, SGNVG_PIP_BASE);
     for (i = 0; i < npaths; i++)
     {
         sg_draw(paths[i].fillOffset, paths[i].fillCount, 1);
@@ -3825,24 +3829,39 @@ static void sgnvg__stroke(NVGcontext* ctx, SGNVGcall* call)
 
     if (ctx->flags & NVG_STENCIL_STROKES)
     {
-        sgnvg__preparePipelineUniforms(ctx, call->uniforms + 1, call->image, call->smp, SGNVG_PIP_STROKE_STENCIL_DRAW);
+        sgnvg__preparePipelineUniforms(
+            ctx,
+            call->uniforms + 1,
+            call->texview,
+            call->smp,
+            SGNVG_PIP_STROKE_STENCIL_DRAW);
 
         for (i = 0; i < npaths; i++)
             sg_draw(paths[i].strokeOffset, paths[i].strokeCount, 1);
 
         // Draw anti-aliased pixels.
-        sgnvg__preparePipelineUniforms(ctx, call->uniforms, call->image, call->smp, SGNVG_PIP_STROKE_STENCIL_ANTIALIAS);
+        sgnvg__preparePipelineUniforms(
+            ctx,
+            call->uniforms,
+            call->texview,
+            call->smp,
+            SGNVG_PIP_STROKE_STENCIL_ANTIALIAS);
         for (i = 0; i < npaths; i++)
             sg_draw(paths[i].strokeOffset, paths[i].strokeCount, 1);
 
         // Clear stencil buffer.
-        sgnvg__preparePipelineUniforms(ctx, call->uniforms, 0, (sg_sampler){0}, SGNVG_PIP_STROKE_STENCIL_CLEAR);
+        sgnvg__preparePipelineUniforms(
+            ctx,
+            call->uniforms,
+            (sg_view){0},
+            (sg_sampler){0},
+            SGNVG_PIP_STROKE_STENCIL_CLEAR);
         for (i = 0; i < npaths; i++)
             sg_draw(paths[i].strokeOffset, paths[i].strokeCount, 1);
     }
     else
     {
-        sgnvg__preparePipelineUniforms(ctx, call->uniforms, call->image, call->smp, SGNVG_PIP_BASE);
+        sgnvg__preparePipelineUniforms(ctx, call->uniforms, call->texview, call->smp, SGNVG_PIP_BASE);
         // Draw Strokes
         for (i = 0; i < npaths; i++)
             sg_draw(paths[i].strokeOffset, paths[i].strokeCount, 1);
@@ -3851,7 +3870,7 @@ static void sgnvg__stroke(NVGcontext* ctx, SGNVGcall* call)
 
 static void sgnvg__triangles(NVGcontext* ctx, SGNVGcall* call)
 {
-    sgnvg__preparePipelineUniforms(ctx, call->uniforms, call->image, call->smp, SGNVG_PIP_BASE);
+    sgnvg__preparePipelineUniforms(ctx, call->uniforms, call->texview, call->smp, SGNVG_PIP_BASE);
     sg_draw(call->triangleOffset, call->triangleCount, 1);
 }
 
@@ -4033,7 +4052,7 @@ void nvgEndFrame(NVGcontext* ctx)
                 tex->flags   ^= NVG_IMAGE_DIRTY;
                 int channels  = tex->type == NVG_TEXTURE_RGBA ? 4 : 1;
                 int nbytes    = tex->width * tex->height * channels;
-                sg_update_image(tex->img, &(sg_image_data){.subimage[0][0] = {tex->imgData, nbytes}});
+                sg_update_image(tex->img, &(sg_image_data){.mip_levels[0] = {tex->imgData, nbytes}});
             }
         }
     }
@@ -4265,7 +4284,7 @@ void nvgFill(NVGcontext* ctx)
     if (call->paths == NULL)
         return;
     call->num_paths = npaths;
-    call->image     = paint.image.id;
+    call->texview   = paint.texview;
     call->smp       = paint.smp;
     call->blendFunc = sgnvg__blendCompositeOperation(compositeOperation);
 
@@ -4412,7 +4431,7 @@ void nvgStroke(NVGcontext* ctx, float stroke_width)
     if (call->paths == NULL)
         return;
     call->num_paths = npaths;
-    call->image     = paint.image.id;
+    call->texview   = paint.texview;
     call->smp       = paint.smp;
     call->blendFunc = sgnvg__blendCompositeOperation(compositeOperation);
 
@@ -4483,7 +4502,10 @@ void nvg__renderText(NVGcontext* ctx, NVGvertex* verts, int nverts)
     NVGpaint  paint = state->paint;
 
     // Render triangles.
-    paint.image.id = ctx->fontImages[ctx->fontImageIdx];
+    SGNVGtexture* tex = sgnvg__findTexture(ctx, ctx->fontImages[ctx->fontImageIdx]);
+    NVG_ASSERT(tex);
+    if (tex)
+        paint.texview = tex->texview;
 
     SGNVGcall*         call = NULL;
     SGNVGfragUniforms* frag = NULL;
@@ -4499,7 +4521,7 @@ void nvg__renderText(NVGcontext* ctx, NVGvertex* verts, int nverts)
         return;
 
     call->type      = SGNVG_TRIANGLES;
-    call->image     = paint.image.id;
+    call->texview   = paint.texview;
     call->smp       = ctx->sampler_linear;
     call->blendFunc = sgnvg__blendCompositeOperation(state->compositeOperation);
 
@@ -4536,6 +4558,8 @@ void nvg__renderText(NVGcontext* ctx, NVGvertex* verts, int nverts)
 // Source: https://github.com/floooh/sokol/issues/102
 sg_image sg_make_image_with_mipmaps(const sg_image_desc* desc_)
 {
+    NVG_ASSERT(false); // TODO: figure out how to do mipmaps with new sokol_gfx
+    /*
     sg_image_desc desc = *desc_;
     NVG_ASSERT(
         desc.pixel_format == SG_PIXELFORMAT_RGBA8 || desc.pixel_format == SG_PIXELFORMAT_BGRA8 ||
@@ -4642,6 +4666,8 @@ sg_image sg_make_image_with_mipmaps(const sg_image_desc* desc_)
     sg_image img = sg_make_image(&desc);
     NVG_FREE(big_target);
     return img;
+    */
+    return (sg_image){};
 }
 
 int snvgCreateImageFromHandleSokol(NVGcontext* ctx, sg_image imageSokol, enum NVGtexture type, int w, int h, int flags)
@@ -4668,29 +4694,28 @@ SGNVGframebuffer snvgCreateFramebuffer(NVGcontext* ctx, int width, int height)
     int adjusted_height = (int)((float)height * ctx->devicePxRatio);
 
     const sg_image_desc col_desc = {
-        .usage.render_attachment = true,
-        .width                   = adjusted_width,
-        .height                  = adjusted_height,
-        .pixel_format            = SG_PIXELFORMAT_BGRA8,
-        .sample_count            = 1,
-        .label                   = NVG_LABEL("SGNVGframebuffer colour image")};
+        .usage.color_attachment = true,
+        .width                  = adjusted_width,
+        .height                 = adjusted_height,
+        .pixel_format           = SG_PIXELFORMAT_BGRA8,
+        .sample_count           = 1,
+        .label                  = NVG_LABEL("SGNVGframebuffer colour image")};
     sg_image img_colour = sg_make_image(&col_desc);
 
     const sg_image_desc depth_desc = {
-        .usage.render_attachment = true,
-        .width                   = adjusted_width,
-        .height                  = adjusted_height,
-        .pixel_format            = SG_PIXELFORMAT_DEPTH_STENCIL,
-        .sample_count            = 1,
-        .label                   = NVG_LABEL("SGNVGframebuffer depth image")};
+        .usage.depth_stencil_attachment = true,
+        .width                          = adjusted_width,
+        .height                         = adjusted_height,
+        .pixel_format                   = SG_PIXELFORMAT_DEPTH_STENCIL,
+        .sample_count                   = 1,
+        .label                          = NVG_LABEL("SGNVGframebuffer depth image")};
     sg_image img_depth = sg_make_image(&depth_desc);
 
-    rt.img   = img_colour;
-    rt.depth = img_depth;
-    rt.att   = sg_make_attachments(&(sg_attachments_desc){
-          .colors[0].image     = rt.img,
-          .depth_stencil.image = img_depth,
-          .label               = NVG_LABEL("SGNVGframebuffer attachment")});
+    rt.img         = img_colour;
+    rt.depth       = img_depth;
+    rt.img_colview = sg_make_view(&(sg_view_desc){.color_attachment = img_colour});
+    rt.img_texview = sg_make_view(&(sg_view_desc){.texture = img_colour});
+    rt.depth_view  = sg_make_view(&(sg_view_desc){.depth_stencil_attachment = img_depth});
 
     rt.width  = width;
     rt.height = height;
@@ -4704,9 +4729,11 @@ void snvgDestroyFramebuffer(NVGcontext* ctx, SGNVGframebuffer* rt)
 {
     if (rt->img.id)
     {
+        sg_destroy_view(rt->depth_view);
+        sg_destroy_view(rt->img_texview);
+        sg_destroy_view(rt->img_colview);
         nvgDeleteImage(ctx, rt->img.id);
         sg_destroy_image(rt->depth);
-        sg_destroy_attachments(rt->att);
         memset(rt, 0, sizeof(*rt));
     }
 }
@@ -4807,18 +4834,17 @@ void snvg__processImageFX(NVGcontext* ctx, SGNVGcommandImageFX* cmd)
 
     if (cmd->apply_lightness_filter)
     {
-        sg_begin_pass(&(sg_pass){
-            .action      = {.colors[0] = {.load_action = SG_LOADACTION_DONTCARE}},
-            .attachments = fx->mip_levels[0].att,
-        });
+        sg_begin_pass(&(sg_pass){.action                    = {.colors[0] = {.load_action = SG_LOADACTION_DONTCARE}},
+                                 .attachments.colors[0]     = fx->mip_levels[0].img_colview,
+                                 .attachments.depth_stencil = fx->mip_levels[0].depth_view});
         if (cmd->apply_lightness_filter)
             sg_apply_pipeline(ctx->pip_lightness_filter);
         else
             sg_apply_pipeline(ctx->pip_texread);
 
         sg_apply_bindings(&(sg_bindings){
-            .images[0]   = cmd->src->img,
-            .samplers[0] = ctx->sampler_nearest,
+            .views[VIEW_tex]   = cmd->src->img_texview,
+            .samplers[SMP_smp] = ctx->sampler_nearest,
         });
         if (cmd->apply_lightness_filter)
         {
@@ -4842,13 +4868,14 @@ void snvg__processImageFX(NVGcontext* ctx, SGNVGcommandImageFX* cmd)
             src0 = cmd->src;
 
         sg_begin_pass(&(sg_pass){
-            .action      = {.colors[0] = {.load_action = SG_LOADACTION_DONTCARE}},
-            .attachments = dst->att,
+            .action                    = {.colors[0] = {.load_action = SG_LOADACTION_DONTCARE}},
+            .attachments.colors[0]     = dst->img_colview,
+            .attachments.depth_stencil = dst->depth_view,
         });
         sg_apply_pipeline(ctx->pip_downsample);
         sg_apply_bindings(&(sg_bindings){
-            .images[0]   = src0->img,
-            .samplers[0] = ctx->sampler_linear,
+            .views[VIEW_tex]   = src0->img_texview,
+            .samplers[SMP_smp] = ctx->sampler_linear,
         });
         // More numerically stable than 1.0f / a->width
         float halfpixel_x = 0.5f / dst->width;
@@ -4898,17 +4925,18 @@ void snvg__processImageFX(NVGcontext* ctx, SGNVGcommandImageFX* cmd)
             NVG_ASSERT(src1->height > src0->height);
 
             sg_begin_pass(&(sg_pass){
-                .action      = {.colors[0] = {.load_action = SG_LOADACTION_DONTCARE}},
-                .attachments = dst->att,
+                .action                    = {.colors[0] = {.load_action = SG_LOADACTION_DONTCARE}},
+                .attachments.colors[0]     = dst->img_colview,
+                .attachments.depth_stencil = dst->depth_view,
             });
 
             sg_apply_pipeline(ctx->pip_upsample_mix);
             sg_apply_bindings(&(sg_bindings){
-                .images[0]   = src0->img, // wet. lower resolution
-                .samplers[0] = ctx->sampler_linear,
+                .views[VIEW_tex_wet]   = src0->img_texview, // wet. lower resolution
+                .samplers[SMP_smp_wet] = ctx->sampler_linear,
 
-                .images[1]   = src1->img, // dry. higher resolution
-                .samplers[1] = ctx->sampler_nearest,
+                .views[VIEW_tex_dry]   = src1->img_texview, // dry. higher resolution
+                .samplers[SMP_smp_dry] = ctx->sampler_nearest,
             });
 
             float halfpixel_x = 0.5f / src0->width;
@@ -4930,13 +4958,14 @@ void snvg__processImageFX(NVGcontext* ctx, SGNVGcommandImageFX* cmd)
                 dst = &fx->resolve;
 
             sg_begin_pass(&(sg_pass){
-                .action      = {.colors[0] = {.load_action = SG_LOADACTION_DONTCARE}},
-                .attachments = dst->att,
+                .action                    = {.colors[0] = {.load_action = SG_LOADACTION_DONTCARE}},
+                .attachments.colors[0]     = dst->img_colview,
+                .attachments.depth_stencil = dst->depth_view,
             });
             sg_apply_pipeline(ctx->pip_upsample);
             sg_apply_bindings(&(sg_bindings){
-                .images[0]   = src0->img,
-                .samplers[0] = ctx->sampler_linear,
+                .views[VIEW_tex]   = src0->img_texview,
+                .samplers[SMP_smp] = ctx->sampler_linear,
             });
 
             float halfpixel_x = 0.5f / src0->width;
@@ -4962,8 +4991,12 @@ void snvg__processImageFX(NVGcontext* ctx, SGNVGcommandImageFX* cmd)
 
 resolve:
     // Draw resolve image
-    sg_begin_pass(
-        &(sg_pass){.action = {.colors[0] = {.load_action = SG_LOADACTION_DONTCARE}}, .attachments = fx->resolve.att});
+    sg_begin_pass(&(sg_pass){
+        .action = {.colors[0] = {.load_action = SG_LOADACTION_DONTCARE}},
+
+        .attachments.colors[0]     = fx->resolve.img_colview,
+        .attachments.depth_stencil = fx->resolve.depth_view,
+    });
 
     if (cmd->apply_bloom)
         sg_apply_pipeline(ctx->pip_bloom);
@@ -4971,9 +5004,9 @@ resolve:
         sg_apply_pipeline(ctx->pip_texread);
 
     sg_apply_bindings(&(sg_bindings){
-        .images[0]   = src0->img,
-        .images[1]   = cmd->src->img,
-        .samplers[0] = ctx->sampler_nearest,
+        .views[VIEW_tex_wet] = src0->img_texview,
+        .views[VIEW_tex_dry] = cmd->src->img_texview,
+        .samplers[SMP_smp]   = ctx->sampler_nearest,
     });
     if (cmd->apply_bloom)
     {
@@ -5079,30 +5112,30 @@ NVGcontext* nvgCreateContext(int flags)
     }
 
     // Image post processing FX pipelines
-    ctx->pip_texread = sg_make_pipeline(&(sg_pipeline_desc){
-        .shader = sg_make_shader(texread_shader_desc(sg_query_backend())),
-        //   .depth                  = {.pixel_format = SG_PIXELFORMAT_NONE},
-        .colors[0].pixel_format = SG_PIXELFORMAT_BGRA8});
+    ctx->pip_texread =
+        sg_make_pipeline(&(sg_pipeline_desc){.shader = sg_make_shader(texread_shader_desc(sg_query_backend())),
+                                             //   .depth                  = {.pixel_format = SG_PIXELFORMAT_NONE},
+                                             .colors[0].pixel_format = SG_PIXELFORMAT_BGRA8});
 
-    ctx->pip_lightness_filter = sg_make_pipeline(&(sg_pipeline_desc){
-        .shader                 = sg_make_shader(lightfilter_shader_desc(sg_query_backend())),
-        .colors[0].pixel_format = SG_PIXELFORMAT_BGRA8});
+    ctx->pip_lightness_filter =
+        sg_make_pipeline(&(sg_pipeline_desc){.shader = sg_make_shader(lightfilter_shader_desc(sg_query_backend())),
+                                             .colors[0].pixel_format = SG_PIXELFORMAT_BGRA8});
 
-    ctx->pip_downsample = sg_make_pipeline(&(sg_pipeline_desc){
-        .shader                 = sg_make_shader(downsample_shader_desc(sg_query_backend())),
-        .colors[0].pixel_format = SG_PIXELFORMAT_BGRA8});
+    ctx->pip_downsample =
+        sg_make_pipeline(&(sg_pipeline_desc){.shader = sg_make_shader(downsample_shader_desc(sg_query_backend())),
+                                             .colors[0].pixel_format = SG_PIXELFORMAT_BGRA8});
 
-    ctx->pip_upsample = sg_make_pipeline(&(sg_pipeline_desc){
-        .shader                 = sg_make_shader(upsample_shader_desc(sg_query_backend())),
-        .colors[0].pixel_format = SG_PIXELFORMAT_BGRA8});
+    ctx->pip_upsample =
+        sg_make_pipeline(&(sg_pipeline_desc){.shader = sg_make_shader(upsample_shader_desc(sg_query_backend())),
+                                             .colors[0].pixel_format = SG_PIXELFORMAT_BGRA8});
 
-    ctx->pip_upsample_mix = sg_make_pipeline(&(sg_pipeline_desc){
-        .shader                 = sg_make_shader(upsample_mix_shader_desc(sg_query_backend())),
-        .colors[0].pixel_format = SG_PIXELFORMAT_BGRA8});
+    ctx->pip_upsample_mix =
+        sg_make_pipeline(&(sg_pipeline_desc){.shader = sg_make_shader(upsample_mix_shader_desc(sg_query_backend())),
+                                             .colors[0].pixel_format = SG_PIXELFORMAT_BGRA8});
 
-    ctx->pip_bloom = sg_make_pipeline(&(sg_pipeline_desc){
-        .shader                 = sg_make_shader(bloom_shader_desc(sg_query_backend())),
-        .colors[0].pixel_format = SG_PIXELFORMAT_BGRA8});
+    ctx->pip_bloom =
+        sg_make_pipeline(&(sg_pipeline_desc){.shader = sg_make_shader(bloom_shader_desc(sg_query_backend())),
+                                             .colors[0].pixel_format = SG_PIXELFORMAT_BGRA8});
 
     // Default samplers
     ctx->sampler_linear  = sg_make_sampler(&(sg_sampler_desc){
@@ -5135,7 +5168,8 @@ NVGcontext* nvgCreateContext(int flags)
 
     // Some platforms does not allow to have samples to unset textures.
     // Create empty one which is bound when there's no texture specified.
-    ctx->dummyTex = nvgCreateTexture(ctx, NVG_TEXTURE_ALPHA, 1, 1, NVG_IMAGE_CPU_UPDATE, NULL);
+    ctx->dummyTex     = nvgCreateTexture(ctx, NVG_TEXTURE_ALPHA, 1, 1, NVG_IMAGE_CPU_UPDATE, NULL);
+    ctx->dummyTexView = sg_make_view(&(sg_view_desc){.texture.image.id = ctx->dummyTex});
 
     nvgReset(ctx);
     nvg__setDevicePixelRatio(ctx, 1.0f);
@@ -5232,7 +5266,10 @@ void nvgDestroyContext(NVGcontext* ctx)
         bool img_exists    = ctx->textures[i].img.id != 0;
         bool should_delete = (ctx->textures[i].flags & NVG_IMAGE_NODELETE) == 0;
         if (img_exists && should_delete)
+        {
+            sg_destroy_view(ctx->textures[i].texview);
             sg_destroy_image(ctx->textures[i].img);
+        }
     }
 
     if (ctx->textures)
