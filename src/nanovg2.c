@@ -4559,6 +4559,7 @@ void nvg__renderText(NVGcontext* ctx, NVGvertex* verts, int nverts)
 sg_image sg_make_image_with_mipmaps(const sg_image_desc* desc_)
 {
     NVG_ASSERT(false); // TODO: figure out how to do mipmaps with new sokol_gfx
+    return (sg_image){0};
     /*
     sg_image_desc desc = *desc_;
     NVG_ASSERT(
@@ -4667,7 +4668,6 @@ sg_image sg_make_image_with_mipmaps(const sg_image_desc* desc_)
     NVG_FREE(big_target);
     return img;
     */
-    return (sg_image){};
 }
 
 int snvgCreateImageFromHandleSokol(NVGcontext* ctx, sg_image imageSokol, enum NVGtexture type, int w, int h, int flags)
