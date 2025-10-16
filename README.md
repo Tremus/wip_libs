@@ -5,3 +5,5 @@ Big bag of my unfinished libs that live in one folder. They're used by several o
 This is made public because there are a few real gems among them. Some are basically finished (haven't been changed in a year) but I'm too busy to polish them. Others are in active development.
 
 I will make little to no attempt to describe them. If you're interested read & take what you like and GLWTS. Many of the libs depend on other public libs found in my github.
+
+I will not promise anything found here will remain here. Some things may move [here](https://github.com/Tremus/xhl) or even be deleted, including this whole repo
