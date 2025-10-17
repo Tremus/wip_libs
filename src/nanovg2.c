@@ -4559,6 +4559,7 @@ void nvg__renderText(NVGcontext* ctx, NVGvertex* verts, int nverts)
 sg_image sg_make_image_with_mipmaps(const sg_image_desc* desc_)
 {
     sg_image_desc desc = *desc_;
+    // TODO: support floats
     NVG_ASSERT(
         desc.pixel_format == SG_PIXELFORMAT_RGBA8 || desc.pixel_format == SG_PIXELFORMAT_BGRA8 ||
         desc.pixel_format == SG_PIXELFORMAT_R8);
@@ -4570,6 +4571,10 @@ sg_image sg_make_image_with_mipmaps(const sg_image_desc* desc_)
     int w          = desc.width;
     int h          = desc.height * desc.num_slices;
     int total_size = 0;
+
+    int max_slices = desc.num_slices;
+    if (max_slices < 1)
+        max_slices = 1;
 
     int target_max_mipmap_levels = desc.num_mipmaps;
     if (target_max_mipmap_levels <= 0)
@@ -4589,9 +4594,8 @@ sg_image sg_make_image_with_mipmaps(const sg_image_desc* desc_)
         total_size += (w * h * num_channels);
     }
 
-
-    unsigned char* big_target  = NVG_MALLOC(total_size);
-    unsigned char* target      = big_target;
+    unsigned char* big_target = NVG_MALLOC(total_size);
+    unsigned char* target     = big_target;
 
     int target_width  = desc.width;
     int target_height = desc.height;
@@ -4620,7 +4624,7 @@ sg_image sg_make_image_with_mipmaps(const sg_image_desc* desc_)
         unsigned       img_size   = target_width * dst_height * num_channels;
         unsigned char* miptarget  = target;
 
-        for (int slice = 0; slice < desc.num_slices; ++slice)
+        for (int slice = 0; slice < max_slices; ++slice)
         {
             for (int x = 0; x < target_width; ++x)
             {
@@ -4647,9 +4651,8 @@ sg_image sg_make_image_with_mipmaps(const sg_image_desc* desc_)
         }
         desc.data.mip_levels[level].ptr   = target;
         desc.data.mip_levels[level].size  = img_size;
-        target                                    += img_size;
-        if (desc.num_mipmaps <= level)
-            desc.num_mipmaps = level + 1;
+        target                           += img_size;
+        desc.num_mipmaps                  = level + 1;
     }
     NVG_ASSERT(desc.num_mipmaps == max_mipmap_levels);
 
