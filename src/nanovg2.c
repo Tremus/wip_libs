@@ -4568,13 +4568,13 @@ sg_image sg_make_image_with_mipmaps(const sg_image_desc* desc_)
     if (desc.pixel_format == SG_PIXELFORMAT_RGBA8 || desc.pixel_format == SG_PIXELFORMAT_BGRA8)
         num_channels = 4;
 
-    int w          = desc.width;
-    int h          = desc.height * desc.num_slices;
-    int total_size = 0;
-
     int max_slices = desc.num_slices;
     if (max_slices < 1)
         max_slices = 1;
+
+    int w          = desc.width;
+    int h          = desc.height * max_slices;
+    int total_size = 0;
 
     int target_max_mipmap_levels = desc.num_mipmaps;
     if (target_max_mipmap_levels <= 0)
@@ -4596,10 +4596,11 @@ sg_image sg_make_image_with_mipmaps(const sg_image_desc* desc_)
 
     unsigned char* big_target = NVG_MALLOC(total_size);
     unsigned char* target     = big_target;
+    NVG_ASSERT(big_target);
 
     int target_width  = desc.width;
     int target_height = desc.height;
-    int dst_height    = target_height * desc.num_slices;
+    int dst_height    = target_height * max_slices;
 
     for (int level = 1; level < max_mipmap_levels; ++level)
     {
@@ -4620,9 +4621,11 @@ sg_image sg_make_image_with_mipmaps(const sg_image_desc* desc_)
         if (target_height < 1)
             target_height = 1;
 
-        dst_height               /= 2;
-        unsigned       img_size   = target_width * dst_height * num_channels;
-        unsigned char* miptarget  = target;
+        dst_height              /= 2;
+        unsigned       img_size  = target_width * dst_height * num_channels;
+        unsigned char* dst       = target;
+
+        NVG_ASSERT(dst < big_target + total_size);
 
         for (int slice = 0; slice < max_slices; ++slice)
         {
@@ -4641,13 +4644,13 @@ sg_image sg_make_image_with_mipmaps(const sg_image_desc* desc_)
                         col += src[((sy + 1) * src_w + (sx + 1)) * num_channels + ch];
                         col += src[((sy + 1) * src_w + sx) * num_channels + ch];
                         col /= 4;
-                        miptarget[(y * target_width + x) * num_channels + ch] = (uint8_t)col;
+                        dst[(y * target_width + x) * num_channels + ch] = (uint8_t)col;
                     }
                 }
             }
 
-            src       += (src_w * src_h * num_channels);
-            miptarget += (target_width * target_height * num_channels);
+            src += (src_w * src_h * num_channels);
+            dst += (target_width * target_height * num_channels);
         }
         desc.data.mip_levels[level].ptr   = target;
         desc.data.mip_levels[level].size  = img_size;
