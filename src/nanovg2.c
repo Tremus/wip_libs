@@ -3721,8 +3721,7 @@ static int sgnvg__convertPaint(
     float              fringe,
     float              strokeThr)
 {
-    SGNVGtexture* tex = NULL;
-    float         invxform[6];
+    float invxform[6];
 
     memset(frag, 0, sizeof(*frag));
 
@@ -3753,23 +3752,15 @@ static int sgnvg__convertPaint(
     frag->strokeMult = (width * 0.5f + fringe * 0.5f) / fringe;
     frag->strokeThr  = strokeThr;
 
-    sg_image img_search = {0};
     if (paint->texview.id != 0)
-        img_search = sg_query_view_image(paint->texview);
-
-    if (img_search.id != 0)
     {
-        tex = sgnvg__findTexture(ctx, img_search.id);
-        if (tex == NULL)
-            return 0;
-
+        sg_image        img = sg_query_view_image(paint->texview);
+        sg_pixel_format fmt = sg_query_image_pixelformat(img);
         nvgTransformInverse(invxform, paint->xform);
         frag->type = NSVG_SHADER_FILLIMG;
-
-        if (tex->type == NVG_TEXTURE_RGBA)
-            frag->texType = (tex->flags & NVG_IMAGE_PREMULTIPLIED) ? 0.0f : 1.0f;
-        else
-            frag->texType = 2.0f;
+        // If image has premultiplied, texType should be 0.
+        // Currently that's not supported
+        frag->texType = fmt == SG_PIXELFORMAT_R8 ? 2 : 1;
     }
     else
     {
@@ -4714,22 +4705,16 @@ SGNVGframebuffer snvgCreateFramebuffer(NVGcontext* ctx, int width, int height)
     rt.width  = width;
     rt.height = height;
 
-    snvgCreateImageFromHandleSokol(ctx, rt.img, NVG_TEXTURE_RGBA, rt.width, rt.height, 0);
-
     return rt;
 }
 
 void snvgDestroyFramebuffer(NVGcontext* ctx, SGNVGframebuffer* rt)
 {
-    if (rt->img.id)
-    {
-        sg_destroy_view(rt->depth_view);
-        sg_destroy_view(rt->img_texview);
-        sg_destroy_view(rt->img_colview);
-        nvgDeleteImage(ctx, rt->img.id);
-        sg_destroy_image(rt->depth);
-        memset(rt, 0, sizeof(*rt));
-    }
+    sg_destroy_view(rt->depth_view);
+    sg_destroy_view(rt->img_texview);
+    sg_destroy_view(rt->img_colview);
+    sg_destroy_image(rt->img);
+    sg_destroy_image(rt->depth);
 }
 
 SGNVGimageFX* snvgCreateImageFX(NVGcontext* ctx, int width, int height, int max_blur_radius)
