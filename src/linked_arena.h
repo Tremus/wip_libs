@@ -31,9 +31,11 @@ typedef struct LinkedArena
     struct LinkedArena* next;
 } LinkedArena;
 
-LinkedArena* linked_arena_create(size_t init_cap);
+LinkedArena* linked_arena_create(size_t min_cap);
+LinkedArena* linked_arena_create_ex(void* hint, size_t cap);
 void         linked_arena_destroy(LinkedArena* arena);
-void*        linked_arena_alloc(LinkedArena* arena, size_t size);
+void*        linked_arena_alloc_aligned(LinkedArena* arena, size_t size, size_t alignment);
+static void* linked_arena_alloc(LinkedArena* arena, size_t size) { return linked_arena_alloc_aligned(arena, size, 32); }
 void* linked_arena_alloc_clear(LinkedArena* arena, size_t size); // Additionally zeros returned memory for convenience
 void  linked_arena_release(LinkedArena* arena, const void* const ptr);
 void  linked_arena_clear(LinkedArena* arena);

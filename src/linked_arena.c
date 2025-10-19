@@ -24,23 +24,31 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 static inline uint64_t linked_arena_align(uint64_t value, uint64_t alignment)
 {
+    xassert(alignment > 0);
+    xassert((alignment & 7) == 0); // Must be aligned to 8 bytes
     uint64_t mask = alignment - 1;
-    uint64_t inc  = (alignment - (value & mask)) & mask;
-    return value + inc;
+    return (value + mask) & ~mask;
+}
+
+LinkedArena* linked_arena_create_ex(void* hint, size_t cap)
+{
+    xassert(cap > sizeof(LinkedArena));
+    LinkedArena* arena = NULL;
+
+    size_t alloc_size = linked_arena_align(cap, 4096);
+
+    arena = xvalloc(hint, alloc_size);
+    xassert(arena);
+    arena->capacity = alloc_size - sizeof(LinkedArena);
+    xassert(arena->capacity > 0);
+
+    return arena;
 }
 
 LinkedArena* linked_arena_create(size_t init_cap)
 {
     xassert(init_cap > 0);
-    LinkedArena* arena = NULL;
-
-    size_t alloc_size = init_cap + sizeof(LinkedArena);
-    alloc_size        = linked_arena_align(alloc_size, 4096);
-
-    arena = xvalloc(0, alloc_size);
-    xassert(arena);
-    arena->capacity = alloc_size - sizeof(LinkedArena);
-    xassert(arena->capacity > 0);
+    LinkedArena* arena = linked_arena_create_ex(NULL, init_cap);
 
     return arena;
 }
@@ -60,12 +68,12 @@ void linked_arena_destroy(LinkedArena* arena)
     }
 }
 
-void* linked_arena_alloc(LinkedArena* arena, size_t size)
+void* linked_arena_alloc_aligned(LinkedArena* arena, size_t size, size_t alignment)
 {
     xassert(size > 0);
     void* ptr = NULL;
 
-    size = linked_arena_align(size, 32);
+    size = linked_arena_align(size, alignment);
 
     while (ptr == NULL)
     {
@@ -81,8 +89,8 @@ void* linked_arena_alloc(LinkedArena* arena, size_t size)
         {
             if (arena->next == NULL) // Reached the end of the list
             {
-                size_t alloc_size = size > arena->capacity ? size : arena->capacity;
-                arena->next       = linked_arena_create(alloc_size);
+                size_t alloc_size = size > arena->capacity ? (size + sizeof(LinkedArena)) : arena->capacity;
+                arena->next       = linked_arena_create_ex(arena, alloc_size);
             }
 
             arena = arena->next;
