@@ -35,7 +35,10 @@ LinkedArena* linked_arena_create_ex(void* hint, size_t cap)
     xassert(cap > sizeof(LinkedArena));
     LinkedArena* arena = NULL;
 
-    size_t alloc_size = linked_arena_align(cap, 4096);
+    size_t alignment = 4096;
+    xvalloc_info(&alignment, 0);
+
+    size_t alloc_size = linked_arena_align(cap, alignment);
 
     arena = xvalloc(hint, alloc_size);
     xassert(arena);
@@ -43,6 +46,17 @@ LinkedArena* linked_arena_create_ex(void* hint, size_t cap)
     xassert(arena->capacity > 0);
 
     return arena;
+}
+
+void* linked_arena_make_hint(LinkedArena* arena)
+{
+    void* hint = arena;
+    if (arena)
+    {
+        size_t offset  = arena->capacity + sizeof(LinkedArena);
+        hint          += offset;
+    }
+    return hint;
 }
 
 LinkedArena* linked_arena_create(size_t init_cap)
@@ -90,7 +104,8 @@ void* linked_arena_alloc_aligned(LinkedArena* arena, size_t size, size_t alignme
             if (arena->next == NULL) // Reached the end of the list
             {
                 size_t alloc_size = size > arena->capacity ? (size + sizeof(LinkedArena)) : arena->capacity;
-                arena->next       = linked_arena_create_ex(arena, alloc_size);
+                void*  hint       = linked_arena_make_hint(arena);
+                arena->next       = linked_arena_create_ex(hint, alloc_size);
             }
 
             arena = arena->next;
