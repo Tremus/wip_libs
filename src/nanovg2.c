@@ -3912,7 +3912,6 @@ static SGNVGblend sgnvg__blendCompositeOperation(NVGcompositeOperationState op)
 
 void nvgBeginFrame(NVGcontext* ctx, float devicePixelRatio)
 {
-    ctx->nstates = 0;
     nvgReset(ctx);
 
     ctx->drawCallCount  = 0;

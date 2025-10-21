@@ -576,7 +576,6 @@ typedef struct NVGcontext
     int          ncommands;
     float        commandx, commandy;
     NVGstate     state;
-    int          nstates;
     int          edgeAntiAlias;
     NVGpathCache cache;
     float        tessTol;
