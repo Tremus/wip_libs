@@ -16,8 +16,8 @@ layout (location = 1) out vec2 fpos;
 void main(void) {
 	ftcoord = tcoord;
 	fpos = vertex;
-    float x = 2.0 * vertex.x / _viewSize.x - 1.0;
-    float y = 1.0 - 2.0 * vertex.y / _viewSize.y;
+    float x = 2.0 * (vertex.x - _viewSize.x) / _viewSize.z - 1.0;
+    float y = 1.0 - 2.0 * (vertex.y - _viewSize.y) / _viewSize.w;
 	gl_Position = vec4(
         x,
         y,

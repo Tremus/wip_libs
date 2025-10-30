@@ -3942,8 +3942,10 @@ int snvg_comsume_commands(NVGcontext* ctx, SGNVGcommand* cmd)
 
             sg_begin_pass(&p->pass);
 
-            ctx->view.viewSize[0] = p->width;
-            ctx->view.viewSize[1] = p->height;
+            ctx->view.viewSize[0] = p->x;
+            ctx->view.viewSize[1] = p->y;
+            ctx->view.viewSize[2] = p->width;
+            ctx->view.viewSize[3] = p->height;
 
             break;
         }
@@ -4996,14 +4998,25 @@ resolve:
     sg_end_pass();
 }
 
-void snvg_command_begin_pass(NVGcontext* ctx, const sg_pass* pass, int width, int height, const char* label)
+void snvg_command_begin_pass(
+    NVGcontext*    ctx,
+    const sg_pass* pass,
+    unsigned       x,
+    unsigned       y,
+    unsigned       width,
+    unsigned       height,
+    const char*    label)
 {
+    NVG_ASSERT(width > 0);
+    NVG_ASSERT(height > 0);
     SGNVGcommand*          cmd = sgnvg__allocCommand(ctx, SGNVG_CMD_BEGIN_PASS, label);
     SGNVGcommandBeginPass* bp  = linked_arena_alloc_clear(ctx->frame_arena, sizeof(*bp));
 
     cmd->payload.beginPass = bp;
 
     bp->pass   = *pass;
+    bp->x      = x;
+    bp->y      = y;
     bp->width  = width;
     bp->height = height;
 }

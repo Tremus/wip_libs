@@ -511,8 +511,9 @@ typedef struct SGNVGcall
 
 typedef struct SGNVGcommandBeginPass
 {
-    sg_pass pass;
-    int     width, height;
+    sg_pass  pass;
+    unsigned x, y;
+    unsigned width, height;
 } SGNVGcommandBeginPass;
 
 typedef struct SGNVGcommandNVG
@@ -1161,7 +1162,14 @@ void             snvgDestroyFramebuffer(NVGcontext* ctx, SGNVGframebuffer* rende
 SGNVGimageFX* snvgCreateImageFX(NVGcontext* ctx, int width, int height, int max_blur_radius);
 void          snvgDestroyImageFX(NVGcontext* ctx, SGNVGimageFX* fx);
 
-void snvg_command_begin_pass(NVGcontext* ctx, const sg_pass*, int width, int height, const char* label);
+void snvg_command_begin_pass(
+    NVGcontext* ctx,
+    const sg_pass*,
+    unsigned    x,
+    unsigned    y,
+    unsigned    width,
+    unsigned    height,
+    const char* label);
 void snvg_command_end_pass(NVGcontext* ctx, const char* label);
 void snvg_command_draw_nvg(NVGcontext* ctx, const char* label);
 // 'radius_px' can be animated each frame. For best performance, finish your animations with radius at a power of 2,
