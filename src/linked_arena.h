@@ -21,6 +21,8 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <stdint.h>
 #include <xhl/debug.h>
 
+// Very dumb linked list + arena/bump allocator structure
+
 typedef struct LinkedArena
 {
     size_t capacity;
@@ -39,8 +41,10 @@ void*        linked_arena_alloc_aligned(LinkedArena* arena, size_t size, size_t 
 static void* linked_arena_alloc(LinkedArena* arena, size_t size) { return linked_arena_alloc_aligned(arena, size, 32); }
 void* linked_arena_alloc_clear(LinkedArena* arena, size_t size); // Additionally zeros returned memory for convenience
 void  linked_arena_release(LinkedArena* arena, const void* const ptr);
-void  linked_arena_clear(LinkedArena* arena);
-void  linked_arena_prune(LinkedArena* arena); // Destroy unused arenas. Won't destroy first item
+// Releases all pointers allocated by arena, and arenas linked further down the chain
+void linked_arena_clear(LinkedArena* arena);
+// Destroy unused arenas. Won't destroy first item
+void linked_arena_prune(LinkedArena* arena);
 
 #ifdef NDEBUG
 #define LINKED_ARENA_LEAK_DETECT_BEGIN(arena)

@@ -134,6 +134,9 @@ void linked_arena_release(LinkedArena* arena, const void* const ptr)
             size_t alloc_size = end - ptr;
             xassert(arena->size >= alloc_size);
             arena->size -= alloc_size;
+
+            // Linked list items further down the chain may still have allocations
+            linked_arena_clear(arena->next);
             return;
         }
         arena = arena->next;
