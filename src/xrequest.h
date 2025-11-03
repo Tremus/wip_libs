@@ -48,8 +48,15 @@ Windows: 8.1+
 macOS: 10.2+
 */
 
-// Return non zero to cancel request/response
-// Return zero to continue
+enum
+{
+    XREQUEST_CONTINUE = 0,
+    XREQUEST_CANCEL   = 1,
+};
+
+// Callback gets called repeatedly, sometimes with no data
+// Return XREQUEST_CONTINUE to continue
+// Return XREQUEST_CANCEL or anything non zero to cancel request/response and exit early
 // If both 'data' and 'size' are non zero, you may copy 'size' bytes from 'data' into your own response buffer
 typedef int (*xreq_callback_t)(
     void*       user,
@@ -418,7 +425,7 @@ void xrequest(const char* hostname, int port, const char* req, unsigned reqlen, 
 
     do
     {
-        if (cb(user_ptr, 0, 0))
+        if (cb(user_ptr, 0, 0) != XREQUEST_CONTINUE)
         {
             ortn = errSecUserCanceled;
             goto cleanup;
@@ -460,7 +467,7 @@ void xrequest(const char* hostname, int port, const char* req, unsigned reqlen, 
         goto cleanup;
     }
 
-    if (cb(user_ptr, 0, 0))
+    if (cb(user_ptr, 0, 0) != XREQUEST_CONTINUE)
     {
         ortn = errSecUserCanceled;
         goto cleanup;
@@ -477,7 +484,7 @@ void xrequest(const char* hostname, int port, const char* req, unsigned reqlen, 
         goto cleanup;
     }
 
-    if (cb(user_ptr, 0, 0))
+    if (cb(user_ptr, 0, 0) != XREQUEST_CONTINUE)
     {
         ortn = errSecUserCanceled;
         goto cleanup;
@@ -512,8 +519,8 @@ void xrequest(const char* hostname, int port, const char* req, unsigned reqlen, 
 
             if (resbuflen > 0)
             {
-                int cancel = cb(user_ptr, resbuf, resbuflen);
-                if (cancel)
+                int should_continue = cb(user_ptr, resbuf, resbuflen);
+                if (should_continue != XREQUEST_CONTINUE)
                     ortn = errSecUserCanceled;
             }
         }
@@ -769,7 +776,7 @@ int tls_connect(TLS_Context* ctx, const char* hostname, int port, void* userptr,
         }
     }
 
-    if (cb(userptr, 0, 0))
+    if (cb(userptr, 0, 0) != XREQUEST_CONTINUE)
         return 1;
 
     // Create a TCP IPv4 socket.
@@ -814,7 +821,7 @@ int tls_connect(TLS_Context* ctx, const char* hostname, int port, void* userptr,
         }
     }
 
-    if (cb(userptr, 0, 0))
+    if (cb(userptr, 0, 0) != XREQUEST_CONTINUE)
         return 1;
 
     ctx->state = TLS_STATE_PENDING;
@@ -861,7 +868,7 @@ int tls_connect(TLS_Context* ctx, const char* hostname, int port, void* userptr,
 
     while (ctx->state == TLS_STATE_PENDING)
     {
-        if (cb(userptr, 0, 0))
+        if (cb(userptr, 0, 0) != XREQUEST_CONTINUE)
             return 1;
 
         // TLS handshake algorithm.
@@ -1127,7 +1134,7 @@ void xrequest(const char* hostname, int port, const char* req, unsigned reqlen, 
                 if (decrypted)
                 {
                     err = cb(user_ptr, decrypted, size);
-                    if (err)
+                    if (err != XREQUEST_CONTINUE)
                     {
                         dbg_fprintf((stderr, "Cancelled\n"));
                         break;
