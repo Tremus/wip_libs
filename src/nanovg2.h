@@ -492,11 +492,11 @@ typedef struct SGNVGpipelineCache
 
 typedef struct SGNVGcall
 {
-    int        type;
-    sg_view    texview;
-    sg_sampler smp;
-    int        triangleOffset;
-    int        triangleCount;
+    enum SGNVGcallType type;
+    sg_view            texview;
+    sg_sampler         smp;
+    int                triangleOffset;
+    int                triangleCount;
 
     SGNVGblend blendFunc;
 

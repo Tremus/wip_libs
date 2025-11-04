@@ -3966,14 +3966,23 @@ int snvg_comsume_commands(NVGcontext* ctx, SGNVGcommand* cmd)
                 ctx->blend.src_factor_alpha = call->blendFunc.srcAlpha;
                 ctx->blend.dst_factor_alpha = call->blendFunc.dstAlpha;
                 ctx->pipelineCacheIndex     = sgnvg__getIndexFromCache(ctx, sgnvg__getCombinedBlendNumber(ctx->blend));
-                if (call->type == SGNVG_FILL)
+                switch (call->type)
+                {
+                case SGNVG_NONE:
+                    break;
+                case SGNVG_FILL:
                     sgnvg__fill(ctx, call);
-                else if (call->type == SGNVG_CONVEXFILL)
+                    break;
+                case SGNVG_CONVEXFILL:
                     sgnvg__convexFill(ctx, call);
-                else if (call->type == SGNVG_STROKE)
+                    break;
+                case SGNVG_STROKE:
                     sgnvg__stroke(ctx, call);
-                else if (call->type == SGNVG_TRIANGLES)
+                    break;
+                case SGNVG_TRIANGLES:
                     sgnvg__triangles(ctx, call);
+                    break;
+                }
 
                 call = call->next;
             }
