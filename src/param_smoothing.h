@@ -25,6 +25,24 @@ static inline float smoothvalue_tick(SmoothedValue* sv)
     return v;
 }
 
+// I think this may be better than the above? FP rounding errors accumulate after LOTS of additions, and multiplies are
+// more stable (Might be wrong on that assumption).
+// static float smoothvalue_tick5(SmoothedValue* sv)
+// {
+//     if (sv->remaining-- > 0)
+//         sv->current += sv->inc;
+//     return sv->target - sv->remaining * sv->inc;
+// }
+
+// Not exactly like tick above, but "close enough" and fast
+static inline float smoothvalue_tickn(SmoothedValue* sv, int steps)
+{
+    int num_steps  = steps < sv->remaining ? steps : sv->remaining;
+    sv->current   += sv->inc * num_steps;
+    sv->remaining -= num_steps;
+    return sv->current;
+}
+
 static void smoothvalue_set_target(SmoothedValue* sv, float newValue, int steps)
 {
     xassert(steps);
