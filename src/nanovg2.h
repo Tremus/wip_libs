@@ -715,6 +715,20 @@ NVGcolour nvgHSLA(float h, float s, float l, unsigned char a);
                                       ( hex        & 0xff) / 255.0f}
 // clang-format on
 
+static uint32_t nvgCompressColour(NVGcolour col)
+{
+    uint32_t r, g, b, a;
+    r  = col.r * 255;
+    g  = col.g * 255;
+    b  = col.b * 255;
+    a  = col.a * 255;
+    r &= 255;
+    g &= 255;
+    b &= 255;
+    a &= 255;
+    return (r << 24) | (g << 16) | (b << 8) | (a << 0);
+}
+
 //
 // Transforms
 //
