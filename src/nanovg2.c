@@ -3572,7 +3572,9 @@ static void sgnvg__preparePipelineUniforms(
     sg_apply_pipeline(pip);
 
     sg_apply_uniforms(UB_nanovg_viewSize, &(sg_range){&ctx->view, sizeof(ctx->view)});
+    ctx->frame_stats.uploaded_bytes += sizeof(ctx->view);
     sg_apply_uniforms(UB_nanovg_frag, &(sg_range){uniforms, sizeof(*uniforms)});
+    ctx->frame_stats.uploaded_bytes += sizeof(*uniforms);
 
     // If no image is set, use empty texture
     if (texview.id == 0)
@@ -3914,10 +3916,12 @@ void nvgBeginFrame(NVGcontext* ctx, float devicePixelRatio)
 {
     nvgReset(ctx);
 
-    ctx->drawCallCount  = 0;
-    ctx->fillTriCount   = 0;
-    ctx->strokeTriCount = 0;
-    ctx->textTriCount   = 0;
+    ctx->frame_stats.drawCallCount  = 0;
+    ctx->frame_stats.fillTriCount   = 0;
+    ctx->frame_stats.strokeTriCount = 0;
+    ctx->frame_stats.textTriCount   = 0;
+    ctx->frame_stats.textTriCount   = 0;
+    ctx->frame_stats.uploaded_bytes = 0;
 
     // Reset calls
     ctx->nverts        = 0;
@@ -3929,7 +3933,7 @@ void nvgBeginFrame(NVGcontext* ctx, float devicePixelRatio)
     nvg__setDevicePixelRatio(ctx, devicePixelRatio);
 }
 
-int snvg_comsume_commands(NVGcontext* ctx, SGNVGcommand* cmd)
+int snvg_consume_commands(NVGcontext* ctx, SGNVGcommand* cmd)
 {
     int ncommands = 0;
     while (cmd != NULL)
@@ -4050,9 +4054,11 @@ void nvgEndFrame(NVGcontext* ctx)
             if (tex->flags & NVG_IMAGE_DIRTY)
             {
                 NVG_ASSERT(tex->imgData != NULL);
-                tex->flags   ^= NVG_IMAGE_DIRTY;
-                int channels  = tex->type == NVG_TEXTURE_RGBA ? 4 : 1;
-                int nbytes    = tex->width * tex->height * channels;
+                tex->flags      ^= NVG_IMAGE_DIRTY;
+                int    channels  = tex->type == NVG_TEXTURE_RGBA ? 4 : 1;
+                size_t nbytes    = tex->width * tex->height * channels;
+
+                ctx->frame_stats.uploaded_bytes += nbytes;
                 sg_update_image(tex->img, &(sg_image_data){.mip_levels[0] = {tex->imgData, nbytes}});
             }
         }
@@ -4076,7 +4082,9 @@ void nvgEndFrame(NVGcontext* ctx)
             });
     }
     // upload vertex data
-    sg_update_buffer(ctx->vertBuf, &(sg_range){ctx->verts, ctx->nverts * sizeof(*ctx->verts)});
+    size_t nbytes                    = ctx->nverts * sizeof(*ctx->verts);
+    ctx->frame_stats.uploaded_bytes += nbytes;
+    sg_update_buffer(ctx->vertBuf, &(sg_range){ctx->verts, nbytes});
 
     if (ctx->cindexes_gpu < ctx->nindexes) // resize GPU index buffer
     {
@@ -4093,9 +4101,11 @@ void nvgEndFrame(NVGcontext* ctx)
             });
     }
     // upload index data
-    sg_update_buffer(ctx->indexBuf, &(sg_range){ctx->indexes, ctx->nindexes * sizeof(*ctx->indexes)});
+    nbytes                           = ctx->nindexes * sizeof(*ctx->indexes);
+    ctx->frame_stats.uploaded_bytes += nbytes;
+    sg_update_buffer(ctx->indexBuf, &(sg_range){ctx->indexes, nbytes});
 
-    int ncommands = snvg_comsume_commands(ctx, ctx->first_command);
+    int ncommands = snvg_consume_commands(ctx, ctx->first_command);
 }
 
 static int sgnvg__maxVertCount(const NVGpath* paths, int npaths)
@@ -4371,10 +4381,11 @@ void nvgFill(NVGcontext* ctx)
     // Count triangles
     for (i = 0; i < ctx->cache.npaths; i++)
     {
-        path                = &ctx->cache.paths[i];
-        ctx->fillTriCount  += path->nfill - 2;
-        ctx->fillTriCount  += path->nstroke - 2;
-        ctx->drawCallCount += 2;
+        path = &ctx->cache.paths[i];
+
+        ctx->frame_stats.fillTriCount  += path->nfill - 2;
+        ctx->frame_stats.fillTriCount  += path->nstroke - 2;
+        ctx->frame_stats.drawCallCount += 2;
     }
 }
 
@@ -4491,9 +4502,10 @@ void nvgStroke(NVGcontext* ctx, float stroke_width)
     // Count triangles
     for (i = 0; i < ctx->cache.npaths; i++)
     {
-        const NVGpath* path  = &ctx->cache.paths[i];
-        ctx->strokeTriCount += path->nstroke - 2;
-        ctx->drawCallCount++;
+        const NVGpath* path = &ctx->cache.paths[i];
+
+        ctx->frame_stats.strokeTriCount += path->nstroke - 2;
+        ctx->frame_stats.drawCallCount++;
     }
 }
 
@@ -4552,8 +4564,8 @@ void nvg__renderText(NVGcontext* ctx, NVGvertex* verts, int nverts)
     // Success
     sgnvg__addCall(ctx, call);
 
-    ctx->drawCallCount++;
-    ctx->textTriCount += nverts / 3;
+    ctx->frame_stats.drawCallCount++;
+    ctx->frame_stats.textTriCount += nverts / 3;
 }
 
 // Source: https://github.com/floooh/sokol/issues/102
@@ -4840,6 +4852,7 @@ void snvg__processImageFX(NVGcontext* ctx, SGNVGcommandImageFX* cmd)
         {
             fs_lightfilter_t lightfilter_uniforms = {.u_threshold = cmd->lightness_threshold};
             sg_apply_uniforms(UB_fs_lightfilter, &SG_RANGE(lightfilter_uniforms));
+            ctx->frame_stats.uploaded_bytes += sizeof(lightfilter_uniforms);
         }
         sg_draw(0, 3, 1);
         sg_end_pass();
@@ -4875,6 +4888,7 @@ void snvg__processImageFX(NVGcontext* ctx, SGNVGcommandImageFX* cmd)
             .u_offset = {halfpixel_x, halfpixel_y},
         };
         sg_apply_uniforms(UB_fs_downsample, &SG_RANGE(uniforms));
+        ctx->frame_stats.uploaded_bytes += sizeof(uniforms);
         sg_draw(0, 3, 1);
         sg_end_pass();
     }
@@ -4937,6 +4951,7 @@ void snvg__processImageFX(NVGcontext* ctx, SGNVGcommandImageFX* cmd)
                 .u_amount = blur_interp_amount,
             };
             sg_apply_uniforms(UB_fs_upsample_mix, &SG_RANGE(uniforms));
+            ctx->frame_stats.uploaded_bytes += sizeof(uniforms);
 
             src0 = dst;
         }
@@ -4965,6 +4980,7 @@ void snvg__processImageFX(NVGcontext* ctx, SGNVGcommandImageFX* cmd)
                 .u_offset = {halfpixel_x, halfpixel_y},
             };
             sg_apply_uniforms(UB_fs_upsample, &SG_RANGE(uniforms));
+            ctx->frame_stats.uploaded_bytes += sizeof(uniforms);
         }
 
         sg_draw(0, 3, 1);
@@ -5002,6 +5018,7 @@ resolve:
     {
         fs_bloom_t bloom_uniforms = {.u_amount = cmd->bloom_amount};
         sg_apply_uniforms(UB_fs_bloom, &SG_RANGE(bloom_uniforms));
+        ctx->frame_stats.uploaded_bytes += sizeof(bloom_uniforms);
     }
     sg_draw(0, 3, 1);
     sg_end_pass();

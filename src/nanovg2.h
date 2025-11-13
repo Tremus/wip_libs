@@ -588,10 +588,15 @@ typedef struct NVGcontext
 
     int fontImages[NVG_MAX_FONTIMAGES];
     int fontImageIdx;
-    int drawCallCount;
-    int fillTriCount;
-    int strokeTriCount;
-    int textTriCount;
+    struct
+    {
+        int drawCallCount;
+        int fillTriCount;
+        int strokeTriCount;
+        int textTriCount;
+        // Track how much data is uploaded to GPU
+        size_t uploaded_bytes;
+    } frame_stats;
 
     // SGNVGcontext....
 
