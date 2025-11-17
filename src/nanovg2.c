@@ -4803,7 +4803,7 @@ void snvg__processImageFX(NVGcontext* ctx, SGNVGcommandImageFX* cmd)
     // 3. Apply the blur additively to the original image
     // You can get creative here by adjusting the lightness threshold and the amount of bloom applied additively
     // Other bloom implementations will do the filtering and downsampling at the same time and claim to get better
-    // quality results and/or performance. Here we filter seperately, but feel free to copy paste the code and design
+    // quality results and/or performance. Here we filter separately, but feel free to copy paste the code and design
     // your own
 
     const SGNVGimageFX* fx = cmd->fx;
