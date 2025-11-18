@@ -1,3 +1,4 @@
+#pragma once
 #include <math.h>
 #include <xhl/debug.h>
 
