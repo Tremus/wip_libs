@@ -1,4 +1,3 @@
-#pragma once
 /*
 MIT No Attribution
 
@@ -17,10 +16,11 @@ HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTIO
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
-#include <cplug_extensions/window.h>
+#ifndef IMGUI_H
+#define IMGUI_H
+
 #include <math.h>
 #include <stdbool.h>
-#include <string.h>
 
 #if defined(_MSC_VER)
 #define IM_ALIGN(a) __declspec(align(a))
@@ -88,11 +88,6 @@ enum // Event flags
 
     // TODO: file drag & drop, import/export
     // TODO: keyboard events
-
-    IMGUI_FLAGS_PW_MOUSE_DOWN_EVENTS =
-        (1 << PW_EVENT_MOUSE_LEFT_DOWN) | (1 << PW_EVENT_MOUSE_RIGHT_DOWN) | (1 << PW_EVENT_MOUSE_MIDDLE_DOWN),
-    IMGUI_FLAGS_PW_MOUSE_UP_EVENTS =
-        (1 << PW_EVENT_MOUSE_LEFT_UP) | (1 << PW_EVENT_MOUSE_RIGHT_UP) | (1 << PW_EVENT_MOUSE_MIDDLE_UP),
 };
 
 // There is no official init function for this object. Just set the whole thing to 0.
@@ -131,6 +126,7 @@ typedef struct imgui_context
     // settings, you may need to draw duplicate frames to all your backbuffers. If your app has stopped redrawing and
     // one of your backbuffers is not a duplicate of the other, then you may get stuck with a flickering screen, which
     // is caused by your driver cycling through backbuffers.
+    // These problems may be self inflicted and perhaps I shouldn't triple buffer my swapchain in the first place
     unsigned num_duplicate_backbuffers;
 
     int last_width, last_height;
@@ -181,6 +177,60 @@ typedef struct imgui_context
     } duplicate_uid_detector;
 #endif
 } imgui_context;
+
+struct PWEvent;
+void imgui_send_event(imgui_context* ctx, const struct PWEvent* e);
+void imgui_begin_frame(imgui_context* ctx);
+void imgui_end_frame(imgui_context* ctx);
+
+unsigned imgui_get_events_circle(imgui_context* ctx, unsigned uid, imgui_pt pt, float radius);
+unsigned imgui_get_events_rect(imgui_context* ctx, unsigned uid, const imgui_rect* rect);
+void     imgui_clear_widget(imgui_context* ctx);
+
+typedef enum ImguiDragType
+{
+    IMGUI_DRAG_HORIZONTAL_VERTICAL,
+    IMGUI_DRAG_HORIZONTAL,
+    IMGUI_DRAG_VERTICAL,
+} ImguiDragType;
+
+void imgui_drag_value(
+    imgui_context* ctx,
+    float*         value,
+    float          vmin,
+    float          vmax,
+    float          range_px,
+    ImguiDragType  drag_type);
+
+static bool imgui_hittest_rect(imgui_pt pos, const imgui_rect* rect)
+{
+    return pos.x >= rect->x && pos.y >= rect->y && pos.x <= rect->r && pos.y <= rect->b;
+}
+
+static bool imgui_hittest_circle(imgui_pt pos, imgui_pt centre, float radius)
+{
+    float diff_x   = pos.x - centre.x;
+    float diff_y   = pos.y - centre.y;
+    float distance = sqrtf(diff_x * diff_x + diff_y * diff_y);
+    return distance < radius;
+}
+
+#endif // IMGUI_H
+
+/*
+██╗███╗   ███╗██████╗ ██╗     ███████╗███╗   ███╗███████╗███╗   ██╗████████╗ █████╗ ████████╗██╗ ██████╗ ███╗   ██╗
+██║████╗ ████║██╔══██╗██║     ██╔════╝████╗ ████║██╔════╝████╗  ██║╚══██╔══╝██╔══██╗╚══██╔══╝██║██╔═══██╗████╗  ██║
+██║██╔████╔██║██████╔╝██║     █████╗  ██╔████╔██║█████╗  ██╔██╗ ██║   ██║   ███████║   ██║   ██║██║   ██║██╔██╗ ██║
+██║██║╚██╔╝██║██╔═══╝ ██║     ██╔══╝  ██║╚██╔╝██║██╔══╝  ██║╚██╗██║   ██║   ██╔══██║   ██║   ██║██║   ██║██║╚██╗██║
+██║██║ ╚═╝ ██║██║     ███████╗███████╗██║ ╚═╝ ██║███████╗██║ ╚████║   ██║   ██║  ██║   ██║   ██║╚██████╔╝██║ ╚████║
+╚═╝╚═╝     ╚═╝╚═╝     ╚══════╝╚══════╝╚═╝     ╚═╝╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝   ╚═╝   ╚═╝ ╚═════╝ ╚═╝  ╚═══╝
+*/
+
+#ifdef IMGUI_IMPL
+#undef IMGUI_IMPL
+
+#include <cplug_extensions/window.h>
+#include <string.h>
 
 static void imgui_clear_widget(imgui_context* ctx)
 {
@@ -252,21 +302,8 @@ static bool imgui_is_uid_valid(imgui_context* ctx, unsigned uid)
 }
 #endif
 
-static bool imgui_hittest_rect(imgui_pt pos, const imgui_rect* rect)
-{
-    return pos.x >= rect->x && pos.y >= rect->y && pos.x <= rect->r && pos.y <= rect->b;
-}
-
-static bool imgui_hittest_circle(imgui_pt pos, imgui_pt centre, float radius)
-{
-    float diff_x   = pos.x - centre.x;
-    float diff_y   = pos.y - centre.y;
-    float distance = hypotf(fabsf(diff_x), fabsf(diff_y));
-    return distance < radius;
-}
-
 // Returns event flags
-static unsigned _imgui_get_events(imgui_context* ctx, unsigned uid, bool hover, bool mouse_down, bool mouse_up)
+unsigned _imgui_get_events(imgui_context* ctx, unsigned uid, bool hover, bool mouse_down, bool mouse_up)
 {
     PW_ASSERT(imgui_is_uid_valid(ctx, uid));
 
@@ -369,6 +406,15 @@ static unsigned _imgui_get_events(imgui_context* ctx, unsigned uid, bool hover, 
         events |= IMGUI_EVENT_DRAG_OVER;
 
     // Mouse down
+
+    enum
+    {
+        IMGUI_FLAGS_PW_MOUSE_DOWN_EVENTS =
+            (1 << PW_EVENT_MOUSE_LEFT_DOWN) | (1 << PW_EVENT_MOUSE_RIGHT_DOWN) | (1 << PW_EVENT_MOUSE_MIDDLE_DOWN),
+        IMGUI_FLAGS_PW_MOUSE_UP_EVENTS =
+            (1 << PW_EVENT_MOUSE_LEFT_UP) | (1 << PW_EVENT_MOUSE_RIGHT_UP) | (1 << PW_EVENT_MOUSE_MIDDLE_UP),
+    };
+
     bool incoming_mouse_down_event  = ctx->frame.type_mouse_down != IMGUI_MOUSE_BUTTON_NONE;
     incoming_mouse_down_event      &= (bool)(ctx->frame.events & IMGUI_FLAGS_PW_MOUSE_DOWN_EVENTS);
     // incoming_mouse_down_event      &= ctx->frame.uid_mouse_down != 0;
@@ -402,9 +448,9 @@ static unsigned _imgui_get_events(imgui_context* ctx, unsigned uid, bool hover, 
     is_dragging      &= ctx->mouse_hold_type == IMGUI_MOUSE_BUTTON_LEFT;
     if (is_dragging)
     {
-        float distance_x = fabsf(ctx->pos_mouse_down.x - ctx->pos_mouse_move.x);
-        float distance_y = fabsf(ctx->pos_mouse_down.y - ctx->pos_mouse_move.y);
-        float distance_r = hypotf(distance_x, distance_y);
+        float distance_x = ctx->pos_mouse_down.x - ctx->pos_mouse_move.x;
+        float distance_y = ctx->pos_mouse_down.y - ctx->pos_mouse_move.y;
+        float distance_r = sqrtf(distance_x * distance_x + distance_y * distance_y);
         if (distance_r > 5) // Drag threshold
         {
             PW_ASSERT(ctx->uid_drag != uid);
@@ -475,7 +521,7 @@ static unsigned _imgui_get_events(imgui_context* ctx, unsigned uid, bool hover, 
     return events;
 }
 
-static unsigned imgui_get_events_rect(imgui_context* ctx, unsigned uid, const imgui_rect* rect)
+unsigned imgui_get_events_rect(imgui_context* ctx, unsigned uid, const imgui_rect* rect)
 {
     bool hover = ctx->mouse_inside_window && imgui_hittest_rect(ctx->pos_mouse_move, rect);
     bool down  = imgui_hittest_rect(ctx->pos_mouse_down, rect);
@@ -483,7 +529,7 @@ static unsigned imgui_get_events_rect(imgui_context* ctx, unsigned uid, const im
     return _imgui_get_events(ctx, uid, hover, down, up);
 }
 
-static unsigned imgui_get_events_circle(imgui_context* ctx, unsigned uid, imgui_pt pt, float radius)
+unsigned imgui_get_events_circle(imgui_context* ctx, unsigned uid, imgui_pt pt, float radius)
 {
     bool hover = ctx->mouse_inside_window && imgui_hittest_circle(ctx->pos_mouse_move, pt, radius);
     bool down  = imgui_hittest_circle(ctx->pos_mouse_down, pt, radius);
@@ -491,15 +537,7 @@ static unsigned imgui_get_events_circle(imgui_context* ctx, unsigned uid, imgui_
     return _imgui_get_events(ctx, uid, hover, down, up);
 }
 
-enum ImguiDragType
-{
-    IMGUI_DRAG_HORIZONTAL_VERTICAL,
-    IMGUI_DRAG_HORIZONTAL,
-    IMGUI_DRAG_VERTICAL,
-};
-
-static void
-imgui_drag_value(imgui_context* ctx, float* value, float vmin, float vmax, float range_px, enum ImguiDragType drag_type)
+void imgui_drag_value(imgui_context* ctx, float* value, float vmin, float vmax, float range_px, ImguiDragType drag_type)
 {
     PW_ASSERT(ctx->uid_mouse_hold); // Are you really dragging right now? Or has your drag ended?
     float delta_x = ctx->pos_mouse_move.x - ctx->mouse_last_drag.x;
@@ -719,3 +757,4 @@ static void imgui_send_event(imgui_context* ctx, const PWEvent* e)
         break;
     }
 }
+#endif // IMGUI_IMPL
