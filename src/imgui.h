@@ -161,7 +161,7 @@ typedef struct imgui_context
         unsigned modifiers_mouse_down;
         unsigned modifiers_mouse_up;
         unsigned modifiers_mouse_move;
-        unsigned modifiders_mouse_wheel; // This probably needs to have its own way to handle ownership of events
+        unsigned modifiers_mouse_wheel; // This probably needs to have its own way to handle ownership of events
         unsigned modifiers_touchpad;
 
         imgui_pt delta_touchpad;
@@ -652,8 +652,8 @@ static void imgui_send_event(imgui_context* ctx, const PWEvent* e)
         ctx->frame.modifiers_mouse_move |= e->mouse.modifiers;
         break;
     case PW_EVENT_MOUSE_SCROLL_WHEEL:
-        ctx->frame.delta_mouse_wheel      += (int)(e->mouse.y / 120.0f);
-        ctx->frame.modifiders_mouse_wheel |= e->mouse.modifiers;
+        ctx->frame.delta_mouse_wheel     += (int)(e->mouse.y / 120.0f);
+        ctx->frame.modifiers_mouse_wheel |= e->mouse.modifiers;
         break;
     case PW_EVENT_MOUSE_TOUCHPAD_BEGIN:
     case PW_EVENT_MOUSE_TOUCHPAD_MOVE:
