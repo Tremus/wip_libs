@@ -115,6 +115,7 @@ typedef struct imgui_context
     imgui_pt pos_mouse_up;
     imgui_pt pos_mouse_move;
 
+    imgui_pt last_frame_mouse_move;
     imgui_pt mouse_last_drag;
 
     bool mouse_inside_window;
@@ -166,6 +167,8 @@ typedef struct imgui_context
 
         imgui_pt delta_touchpad;
         int      delta_mouse_wheel;
+
+        imgui_pt delta_mouse_move;
     } frame;
 
 #ifndef NDEBUG
@@ -582,6 +585,9 @@ static void imgui_begin_frame(imgui_context* ctx)
 #ifndef NDEBUG
     ctx->duplicate_uid_detector.length = 0;
 #endif
+
+    ctx->frame.delta_mouse_move.x = ctx->last_frame_mouse_move.x - ctx->pos_mouse_move.x;
+    ctx->frame.delta_mouse_move.y = ctx->last_frame_mouse_move.y - ctx->pos_mouse_move.y;
 }
 
 // Call at the end of every frame after all events have been processed
@@ -606,6 +612,8 @@ static void imgui_end_frame(imgui_context* ctx)
 
     ctx->uid_last_frame_mouse_over = ctx->uid_mouse_over;
     ctx->uid_last_frame_drag_over  = ctx->uid_drag_over;
+
+    ctx->last_frame_mouse_move = ctx->pos_mouse_move;
 
     memset(&ctx->frame, 0, sizeof(ctx->frame));
 }
