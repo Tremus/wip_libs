@@ -218,6 +218,22 @@ static bool imgui_hittest_circle(imgui_pt pos, imgui_pt centre, float radius)
     return distance < radius;
 }
 
+static unsigned imgui_hash(const char* str)
+{
+    // MurmurHash. Apparently very fast with few collisions: https://stackoverflow.com/a/69812981
+    // Source: https://github.com/aappleby/smhasher/blob/master/src/Hashes.cpp
+    // "All MurmurHash versions are public domain software, and the author disclaims all copyright to their code."
+
+    unsigned int h = 0x12345678; // Seed
+    for (; *str; ++str)
+    {
+        h ^= *str;
+        h *= 0x5bd1e995;
+        h ^= h >> 15;
+    }
+    return h;
+}
+
 #endif // IMGUI_H
 
 /*
@@ -251,22 +267,6 @@ static void imgui_clear_widget(imgui_context* ctx)
     ctx->frame.uid_drag_over_end = 0;
     ctx->frame.uid_drag_end      = 0;
     ctx->frame.uid_touchpad_end  = 0;
-}
-
-static unsigned imgui_hash(const char* str)
-{
-    // MurmurHash. Apparently very fast with few collisions: https://stackoverflow.com/a/69812981
-    // Source: https://github.com/aappleby/smhasher/blob/master/src/Hashes.cpp
-    // "All MurmurHash versions are public domain software, and the author disclaims all copyright to their code."
-
-    unsigned int h = 0x12345678; // Seed
-    for (; *str; ++str)
-    {
-        h ^= *str;
-        h *= 0x5bd1e995;
-        h ^= h >> 15;
-    }
-    return h;
 }
 
 #ifndef NDEBUG
