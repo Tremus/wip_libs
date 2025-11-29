@@ -59,32 +59,33 @@ enum // Event flags
     IMGUI_EVENT_MOUSE_ENTER = 1 << 0,
     IMGUI_EVENT_MOUSE_EXIT  = 1 << 1,
     IMGUI_EVENT_MOUSE_HOVER = 1 << 2,
+    IMGUI_EVENT_MOUSE_MOVE  = 1 << 3,
 
-    IMGUI_EVENT_MOUSE_LEFT_DOWN = 1 << 3, // For single/multiple clicks acting on mouse down
-    IMGUI_EVENT_MOUSE_LEFT_HOLD = 1 << 4, // For animating widgets while button is held
-    IMGUI_EVENT_MOUSE_LEFT_UP   = 1 << 5, // For single clicks acting on mouse up
+    IMGUI_EVENT_MOUSE_LEFT_DOWN = 1 << 4, // For single/multiple clicks acting on mouse down
+    IMGUI_EVENT_MOUSE_LEFT_HOLD = 1 << 5, // For animating widgets while button is held
+    IMGUI_EVENT_MOUSE_LEFT_UP   = 1 << 6, // For single clicks acting on mouse up
 
-    IMGUI_EVENT_MOUSE_RIGHT_DOWN = 1 << 6,
-    IMGUI_EVENT_MOUSE_RIGHT_HOLD = 1 << 7,
-    IMGUI_EVENT_MOUSE_RIGHT_UP   = 1 << 8,
+    IMGUI_EVENT_MOUSE_RIGHT_DOWN = 1 << 7,
+    IMGUI_EVENT_MOUSE_RIGHT_HOLD = 1 << 8,
+    IMGUI_EVENT_MOUSE_RIGHT_UP   = 1 << 9,
 
-    IMGUI_EVENT_MOUSE_MIDDLE_DOWN = 1 << 9,
-    IMGUI_EVENT_MOUSE_MIDDLE_HOLD = 1 << 10,
-    IMGUI_EVENT_MOUSE_MIDDLE_UP   = 1 << 11,
+    IMGUI_EVENT_MOUSE_MIDDLE_DOWN = 1 << 10,
+    IMGUI_EVENT_MOUSE_MIDDLE_HOLD = 1 << 11,
+    IMGUI_EVENT_MOUSE_MIDDLE_UP   = 1 << 12,
 
-    IMGUI_EVENT_MOUSE_WHEEL    = 1 << 12,
-    IMGUI_EVENT_TOUCHPAD_BEGIN = 1 << 13, // For MacBooks touchpad
-    IMGUI_EVENT_TOUCHPAD_MOVE  = 1 << 14,
-    IMGUI_EVENT_TOUCHPAD_END   = 1 << 15,
+    IMGUI_EVENT_MOUSE_WHEEL    = 1 << 13,
+    IMGUI_EVENT_TOUCHPAD_BEGIN = 1 << 14, // For MacBooks touchpad
+    IMGUI_EVENT_TOUCHPAD_MOVE  = 1 << 15,
+    IMGUI_EVENT_TOUCHPAD_END   = 1 << 16,
 
-    IMGUI_EVENT_DRAG_BEGIN = 1 << 16, // Drag source
-    IMGUI_EVENT_DRAG_END   = 1 << 17,
-    IMGUI_EVENT_DRAG_MOVE  = 1 << 18,
+    IMGUI_EVENT_DRAG_BEGIN = 1 << 17, // Drag source
+    IMGUI_EVENT_DRAG_END   = 1 << 18,
+    IMGUI_EVENT_DRAG_MOVE  = 1 << 19,
 
-    IMGUI_EVENT_DRAG_ENTER = 1 << 19, // Drag target
-    IMGUI_EVENT_DRAG_EXIT  = 1 << 20,
-    IMGUI_EVENT_DRAG_OVER  = 1 << 21,
-    IMGUI_EVENT_DRAG_DROP  = 1 << 22,
+    IMGUI_EVENT_DRAG_ENTER = 1 << 20, // Drag target
+    IMGUI_EVENT_DRAG_EXIT  = 1 << 21,
+    IMGUI_EVENT_DRAG_OVER  = 1 << 22,
+    IMGUI_EVENT_DRAG_DROP  = 1 << 23,
 
     // TODO: file drag & drop, import/export
     // TODO: keyboard events
@@ -349,6 +350,8 @@ unsigned _imgui_get_events(imgui_context* ctx, unsigned uid, bool hover, bool mo
 
     if (ctx->uid_mouse_over == uid)
         events |= IMGUI_EVENT_MOUSE_HOVER;
+    if (ctx->uid_mouse_over == uid && (ctx->frame.events & (1 << PW_EVENT_MOUSE_MOVE)))
+        events |= IMGUI_EVENT_MOUSE_MOVE;
 
     // Mouse wheel & touchpad
     if (ctx->uid_mouse_over == uid && ctx->frame.delta_mouse_wheel)
