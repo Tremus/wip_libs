@@ -252,7 +252,7 @@ static unsigned imgui_hash(const char* str)
 #include <cplug_extensions/window.h>
 #include <string.h>
 
-static void imgui_clear_widget(imgui_context* ctx)
+void imgui_clear_widget(imgui_context* ctx)
 {
     ctx->uid_last_frame_mouse_over = 0;
     ctx->uid_last_frame_drag_over  = 0;
@@ -583,7 +583,7 @@ void imgui_drag_value(imgui_context* ctx, float* value, float vmin, float vmax, 
     *value = next_value;
 }
 
-static void imgui_begin_frame(imgui_context* ctx)
+void imgui_begin_frame(imgui_context* ctx)
 {
 #ifndef NDEBUG
     ctx->duplicate_uid_detector.length = 0;
@@ -594,7 +594,7 @@ static void imgui_begin_frame(imgui_context* ctx)
 }
 
 // Call at the end of every frame after all events have been processed
-static void imgui_end_frame(imgui_context* ctx)
+void imgui_end_frame(imgui_context* ctx)
 {
     ctx->num_duplicate_backbuffers++;
 
@@ -621,7 +621,7 @@ static void imgui_end_frame(imgui_context* ctx)
     memset(&ctx->frame, 0, sizeof(ctx->frame));
 }
 
-static void imgui_send_event(imgui_context* ctx, const PWEvent* e)
+void imgui_send_event(imgui_context* ctx, const PWEvent* e)
 {
     ctx->num_duplicate_backbuffers  = 0;
     ctx->frame.events              |= 1 << e->type;
