@@ -4282,7 +4282,7 @@ void nvgFill(NVGcontext* ctx)
     // Looks like you forgot to call snvg_command_draw_nvg() before issuing nvgFill()/nvgStroke()/nvgText() commands!
     // NVG_ASSERT(ctx->current_nvg_draw != NULL); // TODO: remove?
     if (ctx->current_nvg_draw == NULL)
-        snvg_command_draw_nvg(ctx, 0);
+        snvg_command_draw_nvg(ctx, NVG_LABEL("nvgFill"));
 
     call = linked_arena_alloc_clear(ctx->frame_arena, sizeof(*call));
 
@@ -4431,7 +4431,7 @@ void nvgStroke(NVGcontext* ctx, float stroke_width)
     // Looks like you forgot to call snvg_command_draw_nvg() before issuing nvgFill()/nvgStroke()/nvgText() commands!
     // NVG_ASSERT(ctx->current_nvg_draw != NULL); // TODO: remove?
     if (ctx->current_nvg_draw == NULL)
-        snvg_command_draw_nvg(ctx, 0);
+        snvg_command_draw_nvg(ctx, NVG_LABEL("nvgStroke"));
 
     call = linked_arena_alloc_clear(ctx->frame_arena, sizeof(*call));
 
