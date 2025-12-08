@@ -73,6 +73,86 @@
 // - Add bloom and blur post processing effects
 // - Basic out of order rendering
 
+/*
+Notes to self on resolution, DPI, backingScaleFactor, logical/physical pixels etc.
+
+Windows:
+    When users go to Start > Settings > Display > Scale > 125%, Windows will send a WM_DPICHANGED event to all top level
+    windows, and programmers are expected to scale their content according to HIWORD(wParam) / USER_DEFAULT_SCREEN_DPI.
+    Usually this is calculated like this:
+        float contentScale = 96 / 96; // 100%
+        float contentScale = 120 / 96; // 125%
+        float contentScale = 144 / 96; // 150%
+    This scaling is useful for users who want to make thing like text bigger. Developers can of course ignore all of
+    this an applications will work fine.
+    Supporting content scaling can be tricky. Many things like font sizes, heights and widths of padding may all need to
+    be multiplied by this scale. This may result in a lot of extra code with a developer scaling every last element by
+    this size. It also introduces the risk of forgetting to scale an element, which will result in many large elements
+    in a GUI with out of place small elements.
+
+    When querying for the width/height of monitors, Windows will always honestly report the number of pixels
+    eg.
+        RECT Rect;
+        GetWindowRect(GetDesktopWindow(), &Rect);
+
+    On Windows, multisample antialiasing tricks are optional and you have to go out of your way to set it all up
+
+macOS:
+    Apple confuse users and developers with jargon like "Logical pixels" and "physical pixels". I will attempt to
+    explain my understanding of both, but first, suspend your own understanding of them because I believe most people
+    writing about the topic are uninformed or misinformed. Note that I may also be wrong because macOS is largely
+    undocumented, making learning about their systems difficult, and Apple are sometimes secretive.
+
+        "Logical pixels"
+        When users go to Settings > Displays > "Larger text" or "More space", users think they are resizing/scaling
+        their entire screen in pixels. Apps are expected to pretend the screen they are on is this scaled size. At a
+        high level this is convenient, apps can tell some graphics library "render this text 12px" and the renderer
+        will automagically scale that text under the hood to the appropriate size on the screen the user wants.
+
+        "Physical pixels"
+        This is simply `logicalpixels * NSScreen.backingScaleFactor;`. Many Apple devices have a thing they call "Retina
+        Screens", which is a fancy way of saying the monitor hardware has a high pixel density and software performance
+        mutlisample antiasliasing. Very often `NSScreen.backingScaleFactor` is set to `2`. Others online say this can
+        sometimes be set to 1 or 3 depending on the device.
+
+        Some info online may mislead you into thinking this is how you calculate the size in pixels of the monitor. In
+        many cases this is not true. For example, my M1 MB Air has a pixel resolution of 2560x1600, but resultion
+        options within macOS settings are:
+            - 1680x1050
+            - 1440x900
+            - 1280x800
+            - 1024x640
+        Only one of those options when multiplied by backingScaleFactor (2) will equal the actual pixel resolution. So
+        much advice found elsewhere online is wildly misinformed. Apple do not appear to be using the "physical pixels"
+        terminology, only other misinformed developers. Be aware of this when you read anything about it online.
+
+        Apples compositing system for their windows want to deal with actual buffer sizes 1x/2x/3x of whatever logical
+        pixels they represent.
+
+    When querying for the width/height of monitors, macOS will report results in logical pixels. It's possible to use
+    some clever tricks to obtain the real size in pixels of the monitor without any physical (backing store) or logical
+    (user configured scale) pixel confusion, but I'm unsure whether this is useful in many cases.
+
+    All of apples advice is to use their scaling methods, including when using Metal
+    https://developer.apple.com/documentation/metal/managing-your-game-window-for-metal-in-macos
+
+    From my own testing, the swapchain in metal expects to be controlled using logical pixels. What's a little
+    unintuitive is that framebuffers don't have this backingScaleFactor applied to them, so you have to perform the
+    scaling of the framebuffer size, and all drawing and scissoring applied to it yourself.
+
+    By selectively using this backing scale factor, Apple appear to have a built in multisample aliasing system they
+    want you to conform to.
+
+Now how can we wrap all of this in a crossplatform way?
+
+It doesn't appear to be a good solution for Windows to similarly choose to use a kind of logical pixels here. Heights of
+elements that are 10px tall won't multiply by 1.25 very well if the edges are expected to be sharp (a height of 12.5px
+may cause a blurry edge at the top or buttom). If you want sharp edges, you have to floor all these multiplied values.
+This can cause elements that are meant to be centred to be 1px off.
+
+I don't have a neat solution to this atm but when I do hopefully I can remember to write about it here
+*/
+
 #ifndef NANOVG_H
 #define NANOVG_H
 
