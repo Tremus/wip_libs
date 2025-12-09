@@ -47,9 +47,12 @@ void linked_arena_clear(LinkedArena* arena);
 void linked_arena_prune(LinkedArena* arena);
 
 #ifdef NDEBUG
-#define LINKED_ARENA_LEAK_DETECT_BEGIN(arena)
-#define LINKED_ARENA_LEAK_DETECT_END(arena)
+#define LINKED_ARENA_TAGGED_LEAK_DETECT_BEGIN(arena, tag)
+#define LINKED_ARENA_TAGGED_LEAK_DETECT_END(arena, tag)
 #else
-#define LINKED_ARENA_LEAK_DETECT_BEGIN(arena) size_t _arena_size = arena->size;
-#define LINKED_ARENA_LEAK_DETECT_END(arena)   xassert(_arena_size == arena->size);
+#define LINKED_ARENA_TAGGED_LEAK_DETECT_BEGIN(arena, tag) size_t tag = arena->size;
+#define LINKED_ARENA_TAGGED_LEAK_DETECT_END(arena, tag)   xassert(tag == arena->size);
 #endif
+
+#define LINKED_ARENA_LEAK_DETECT_BEGIN(arena) LINKED_ARENA_TAGGED_LEAK_DETECT_BEGIN(arena, _arena_size)
+#define LINKED_ARENA_LEAK_DETECT_END(arena)   LINKED_ARENA_TAGGED_LEAK_DETECT_END(arena, _arena_size)
