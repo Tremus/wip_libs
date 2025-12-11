@@ -4064,9 +4064,6 @@ void nvgEndFrame(NVGcontext* ctx)
         }
     }
 
-    if (ctx->nverts == 0 && ctx->nindexes == 0)
-        return;
-
     if (ctx->cverts_gpu < ctx->nverts) // resize GPU vertex buffer
     {
         if (ctx->cverts_gpu) // delete old buffer if necessary
@@ -4084,7 +4081,8 @@ void nvgEndFrame(NVGcontext* ctx)
     // upload vertex data
     size_t nbytes                    = ctx->nverts * sizeof(*ctx->verts);
     ctx->frame_stats.uploaded_bytes += nbytes;
-    sg_update_buffer(ctx->vertBuf, &(sg_range){ctx->verts, nbytes});
+    if (nbytes)
+        sg_update_buffer(ctx->vertBuf, &(sg_range){ctx->verts, nbytes});
 
     if (ctx->cindexes_gpu < ctx->nindexes) // resize GPU index buffer
     {
@@ -4103,7 +4101,8 @@ void nvgEndFrame(NVGcontext* ctx)
     // upload index data
     nbytes                           = ctx->nindexes * sizeof(*ctx->indexes);
     ctx->frame_stats.uploaded_bytes += nbytes;
-    sg_update_buffer(ctx->indexBuf, &(sg_range){ctx->indexes, nbytes});
+    if (nbytes)
+        sg_update_buffer(ctx->indexBuf, &(sg_range){ctx->indexes, nbytes});
 
     int ncommands = snvg_consume_commands(ctx, ctx->first_command);
 }
