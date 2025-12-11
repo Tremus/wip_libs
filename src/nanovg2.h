@@ -453,8 +453,8 @@ typedef struct SGNVGtexture
 typedef struct SGNVGframebuffer
 {
     sg_image img;
-    sg_view  img_colview;
-    sg_view  img_texview;
+    sg_view  img_colview; // View for writing to
+    sg_view  img_texview; // View for reading from
     sg_image depth;
     sg_view  depth_view;
 
