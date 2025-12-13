@@ -628,7 +628,7 @@ void imgui_send_event(imgui_context* ctx, const PWEvent* e)
 
     switch (e->type)
     {
-    case PW_EVENT_RESIZE:
+    case PW_EVENT_RESIZE_UPDATE:
         ctx->next_width  = e->resize.width;
         ctx->next_height = e->resize.height;
         break;
@@ -756,6 +756,8 @@ void imgui_send_event(imgui_context* ctx, const PWEvent* e)
     }
 
     // TODO
+    case PW_EVENT_RESIZE_BEGIN:
+    case PW_EVENT_RESIZE_END:
     case PW_EVENT_DPI_CHANGED:
     case PW_EVENT_KEY_DOWN:
     case PW_EVENT_KEY_UP:
