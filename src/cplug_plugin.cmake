@@ -76,8 +76,18 @@ if (CMAKE_C_COMPILER_ID STREQUAL "Clang" OR CMAKE_C_COMPILER_ID STREQUAL "AppleC
         -Wno-microsoft-enum-forward-reference
         )
 endif()
-# list(APPEND CMAKE_C_FLAGS -fsanitize=address)
-# list(APPEND CMAKE_CXX_FLAGS -fsanitize=address)
+
+
+if (_WIN32)
+    # Useful
+    # https://gist.github.com/pervognsen/6b3c7f02c6e7db4b776bf92e0bb09d1b
+    # list(APPEND PLUGIN_OPTIONS /fsanitize=address) # not working
+
+    # list(APPEND PLUGIN_LIBRARIES clang_rt.asan-x86_64)
+    # list(APPEND PLUGIN_OPTIONS "/MT")
+else()
+    # list(APPEND PLUGIN_OPTIONS "-fsanitize=address")
+endif()
 
 if (CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
     list(APPEND PLUGIN_OPTIONS /GR- /EHasc-)
