@@ -74,6 +74,7 @@ if (CMAKE_C_COMPILER_ID STREQUAL "Clang" OR CMAKE_C_COMPILER_ID STREQUAL "AppleC
         -Wno-c++17-extensions
         -Wno-c++20-extensions
         -Wno-microsoft-enum-forward-reference
+        -Wno-typedef-redefinition
         )
 endif()
 

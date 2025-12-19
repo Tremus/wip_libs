@@ -157,6 +157,7 @@ I don't have a neat solution to this atm but when I do hopefully I can remember 
 #define NANOVG_H
 
 #include <sokol_gfx.h>
+#include <stb_rect_pack.h>
 
 #include "linked_arena.h"
 
@@ -195,6 +196,9 @@ extern "C" {
 #if defined(NVG_FONT_STB_TRUETYPE)
 #include <stb_truetype.h>
 #endif
+
+#include <text.glsl.h>
+
 
 typedef struct NVGcolour
 {
@@ -460,9 +464,10 @@ typedef struct SGNVGframebuffer
     sg_image depth;
     sg_view  depth_view;
 
-    int   width;
-    int   height;
-    float devicePixelRatio;
+    int width;
+    int height;
+    // In theory this is a double value found on NSWindow and NSScreen, but in practice this is strictly 1, 2, or 3
+    int backingScaleFactor;
 } SGNVGframebuffer;
 
 typedef struct SGNVGimageFX
@@ -660,6 +665,38 @@ typedef struct NVGfontSlot
     int owned;
 } NVGfontSlot;
 
+// Used to identify a unique glyph.
+// TODO: support multiple fonts
+typedef union NVGatlasRectHeader
+{
+    struct
+    {
+        uint32_t glyphid;
+        // TODO: this could probably be packed into an integer. To support sizes like 12.25, multiply & divide by 4
+        float    font_size;
+    };
+    uint64_t data;
+} NVGatlasRectHeader;
+
+typedef struct NVGatlasRect
+{
+    union NVGatlasRectHeader header;
+
+    int16_t x, y, w, h;
+
+    int16_t pen_offset_x;
+    int16_t pen_offset_y;
+
+    sg_view img_view;
+} NVGatlasRect;
+
+typedef struct NVGatlas
+{
+    sg_view img_view;
+    bool    dirty;
+    bool    full;
+} NVGatlas;
+
 typedef struct NVGcontext
 {
     float*       commands;
@@ -672,7 +709,7 @@ typedef struct NVGcontext
     float        tessTol;
     float        distTol;
     float        fringeWidth;
-    float        devicePxRatio;
+    int          backingScaleFactor;
 
     // Old
     // struct FONScontext* fs;
@@ -698,6 +735,29 @@ typedef struct NVGcontext
     // NOTE: integer IDs for fonts are handed to the user that represent idx+1
     // This leaves 0 and <0 as invalid ids
     NVGfontSlot fonts[NVG_MAX_FONT_SLOTS];
+
+    NVGatlas* glyph_atlases;
+    NVGatlasRect*  rects;
+
+    struct
+    {
+        int            idx;
+        stbrp_context  ctx;
+        stbrp_node*    nodes;
+        unsigned char* img_data;
+    } current_atlas;
+
+    // Text pipeline
+    sg_pipeline text_pip;
+    sg_buffer   text_sbo;
+    sg_view     text_sbv;
+    sg_sampler  text_smp;
+
+#ifndef NVG_MAX_GLYPHS
+#define NVG_MAX_GLYPHS 128
+#endif
+    size_t        text_buffer_len;
+    text_buffer_t text_buffer[NVG_MAX_GLYPHS];
 
     struct
     {
@@ -774,8 +834,8 @@ void nvgDebugDumpPathCache(NVGcontext* ctx);
 // control the rendering on Hi-DPI devices.
 // For example, GLFW returns two dimension for an opened window: window size and
 // frame buffer size. In that case you would set windowWidth/Height to the window size
-// devicePixelRatio to: frameBufferWidth / windowWidth.
-void nvgBeginFrame(NVGcontext* ctx, float devicePixelRatio);
+// backingScaleFactor to: frameBufferWidth / windowWidth.
+void nvgBeginFrame(NVGcontext* ctx, int backingScaleFactor);
 
 // Ends drawing flushing remaining render state.
 void nvgEndFrame(NVGcontext* ctx);
@@ -1230,7 +1290,7 @@ int nvgCreateFontMemAtIndex(
 // void nvgSetFontFaceByName(NVGcontext* ctx, const char* font);
 
 // Draws text string at specified location. If end is specified only the sub-string up to the end is drawn.
-float nvgText(NVGcontext* ctx, float x, float y, const char* string, const char* end);
+int nvgText(NVGcontext* ctx, float x, float y, const char* string, const char* end);
 
 // Draws multi-line text string at specified location wrapped at the specified width. If end is specified only the
 // sub-string up to the end is drawn. White space is stripped at the beginning of the rows, the text is split at word
