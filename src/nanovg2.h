@@ -169,7 +169,7 @@ extern "C" {
 #ifndef NVG_MAX_STATES
 #define NVG_MAX_STATES 32
 #endif
-#define NVG_MAX_FONTIMAGES 4
+// #define NVG_MAX_FONTIMAGES 4
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -182,16 +182,18 @@ extern "C" {
 #define NVG_LABEL(...) 0
 #endif
 
-#ifndef NVG_ASSERT
-#include <assert.h>
-#define NVG_ASSERT(cond) assert(cond)
+#if !defined(NVG_FONT_STB_TRUETYPE) && !defined(NVG_FONT_FREETYPE_SINGLECHANNEL) && !defined(NVG_FONT_FREETYPE_MULTICHANNEL)
+// #define NVG_FONT_STB_TRUETYPE
+// TODO: fix blending in multichannel
+// #define NVG_FONT_FREETYPE_MULTICHANNEL
+#define NVG_FONT_FREETYPE_SINGLECHANNEL
+#endif
+#if defined(NVG_FONT_FREETYPE_SINGLECHANNEL) || defined(NVG_FONT_FREETYPE_MULTICHANNEL)
+#define NVG_FONT_FREETYPE
 #endif
 
-#if !defined(NVG_MALLOC) || !defined(NVG_REALLOC) || !defined(NVG_FREE)
-#include <stdlib.h>
-#define NVG_MALLOC(sz)       malloc(sz)
-#define NVG_REALLOC(ptr, sz) realloc(ptr, sz)
-#define NVG_FREE(ptr)        free(ptr)
+#if defined(NVG_FONT_STB_TRUETYPE)
+#include <stb_truetype.h>
 #endif
 
 typedef struct NVGcolour
@@ -389,9 +391,9 @@ typedef struct NVGstate
     float                      xform[6];
     NVGscissor                 scissor;
     float                      fontSize;
-    float                      letterSpacing;
+    // float                      letterSpacing;
     float                      lineHeight;
-    float                      fontBlur;
+    // float                      fontBlur;
     int                        textAlign;
     int                        fontId;
 } NVGstate;
@@ -650,6 +652,14 @@ typedef struct SGNVGcommand
     struct SGNVGcommand* next;
 } SGNVGcommand;
 
+typedef struct NVGfontSlot
+{
+    void* kbtr_font_ptr;
+    void* data;
+    size_t data_size;
+    int owned;
+} NVGfontSlot;
+
 typedef struct NVGcontext
 {
     float*       commands;
@@ -664,10 +674,31 @@ typedef struct NVGcontext
     float        fringeWidth;
     float        devicePxRatio;
 
-    struct FONScontext* fs;
+    // Old
+    // struct FONScontext* fs;
+    // int fontImages[NVG_MAX_FONTIMAGES];
+    // int fontImageIdx;
 
-    int fontImages[NVG_MAX_FONTIMAGES];
-    int fontImageIdx;
+    // New
+
+    struct kbts_shape_context* kbts;
+
+#ifdef NVG_FONT_FREETYPE
+    struct FT_LibraryRec_* ft_lib;
+    struct FT_FaceRec_*    ft_face;
+#endif
+
+#ifdef NVG_FONT_STB_TRUETYPE
+    stbtt_fontinfo stbtt;
+#endif
+
+#ifndef NVG_MAX_FONT_SLOTS
+#define NVG_MAX_FONT_SLOTS 4
+#endif // NVG_MAX_FONTS
+    // NOTE: integer IDs for fonts are handed to the user that represent idx+1
+    // This leaves 0 and <0 as invalid ids
+    NVGfontSlot fonts[NVG_MAX_FONT_SLOTS];
+
     struct
     {
         int drawCallCount;
@@ -949,10 +980,10 @@ int nvgCreateImageMem(NVGcontext* ctx, int imageFlags, unsigned char* data, int 
 int nvgCreateImageRGBA(NVGcontext* ctx, int w, int h, int imageFlags, const unsigned char* data);
 
 // Updates image data specified by image handle.
-void nvgUpdateImage(NVGcontext* ctx, int image, const unsigned char* data);
+// void nvgUpdateImage(NVGcontext* ctx, int image, const unsigned char* data);
 
 // Gets the dimensions of a created image. Returns true on success
-bool nvgGetImageSize(NVGcontext* ctx, int image, int* w, int* h);
+// bool nvgGetImageSize(NVGcontext* ctx, int image, int* w, int* h);
 
 // Deletes created image.
 void nvgDeleteImage(NVGcontext* ctx, int image);
@@ -960,7 +991,7 @@ void nvgDeleteImage(NVGcontext* ctx, int image);
 // Returns handle to the image.
 int nvgCreateTexture(NVGcontext* ctx, enum NVGtexture type, int w, int h, int imageFlags, const unsigned char* data);
 
-int nvgUpdateTexture(NVGcontext* ctx, int image, int x, int y, int w, int h, const unsigned char* data);
+// int nvgUpdateTexture(NVGcontext* ctx, int image, int x, int y, int w, int h, const unsigned char* data);
 
 //
 // Paints
@@ -1141,61 +1172,62 @@ void nvgStroke(NVGcontext* ctx, float stroke_width);
 //
 // Note: currently only solid colour fill is supported for text.
 
+// TODO: load font
+
+// Sets the font size of current text style.
+static void nvgSetFontSize(NVGcontext* ctx, float size) { ctx->state.fontSize = size; }
+
+// Sets the proportional line height of current text style. The line height is specified as multiple of font size.
+static void nvgSetTextLineHeight(NVGcontext* ctx, float lineHeight) {ctx->state.lineHeight = lineHeight; }
+
+// Sets the text align of current text style, see NVGalign for options.
+static void nvgSetTextAlign(NVGcontext* ctx, int align) { ctx->state.textAlign = align; }
+
+// Sets the font face based on specified id of current text style.
+void nvgSetFontFaceById(NVGcontext* ctx, int font_id);
+// static void nvgSetFontFaceById(NVGcontext* ctx, int font_id) { ctx->state.fontId = font_id;}
+
 // Creates font by loading it from the disk from specified file name.
 // Returns handle to the font.
-int nvgCreateFont(NVGcontext* ctx, const char* name, const char* filename);
-
-// fontIndex specifies which font face to load from a .ttf/.ttc file.
-int nvgCreateFontAtIndex(NVGcontext* ctx, const char* name, const char* filename, const int fontIndex);
+// Note: the library takes ownership of the data
+int nvgCreateFont(NVGcontext* ctx, const char* filename);
+int nvgCreateFontAtIndex(NVGcontext* ctx, const char* filename, const int fontIndex);
 
 // Creates font by loading it from the specified memory chunk.
 // Returns handle to the font.
-int nvgCreateFontMem(NVGcontext* ctx, const char* name, unsigned char* data, int ndata, int freeData);
-
-// fontIndex specifies which font face to load from a .ttf/.ttc file.
+// Note: you are responsible for persisting the data for the duration of use in this program
+int nvgCreateFontMem(NVGcontext* ctx, unsigned char* data, int ndata);
 int nvgCreateFontMemAtIndex(
     NVGcontext*    ctx,
-    const char*    name,
     unsigned char* data,
     int            ndata,
-    int            freeData,
     const int      fontIndex);
 
+// TODO: remove these features
 // Finds a loaded font of specified name, and returns handle to it, or -1 if the font is not found.
-int nvgFindFont(NVGcontext* ctx, const char* name);
+// int nvgFindFont(NVGcontext* ctx, const char* name);
 
 // Adds a fallback font by handle.
-int nvgAddFallbackFontId(NVGcontext* ctx, int baseFont, int fallbackFont);
+// int nvgAddFallbackFontId(NVGcontext* ctx, int baseFont, int fallbackFont);
 
 // Adds a fallback font by name.
-int nvgAddFallbackFont(NVGcontext* ctx, const char* baseFont, const char* fallbackFont);
+// int nvgAddFallbackFont(NVGcontext* ctx, const char* baseFont, const char* fallbackFont);
 
 // Resets fallback fonts by handle.
-void nvgResetFallbackFontsId(NVGcontext* ctx, int baseFont);
+// void nvgResetFallbackFontsId(NVGcontext* ctx, int baseFont);
 
 // Resets fallback fonts by name.
-void nvgResetFallbackFonts(NVGcontext* ctx, const char* baseFont);
+// void nvgResetFallbackFonts(NVGcontext* ctx, const char* baseFont);
 
-// Sets the font size of current text style.
-void nvgSetFontSize(NVGcontext* ctx, float size);
 
 // Sets the blur of current text style.
-void nvgSetFontBlur(NVGcontext* ctx, float blur);
+// static void nvgSetFontBlur(NVGcontext* ctx, float blur) { ctx->state.fontBlur = blur; }
 
 // Sets the letter spacing of current text style.
-void nvgSetLetterSpacing(NVGcontext* ctx, float spacing);
-
-// Sets the proportional line height of current text style. The line height is specified as multiple of font size.
-void nvgSetTextLineHeight(NVGcontext* ctx, float lineHeight);
-
-// Sets the text align of current text style, see NVGalign for options.
-void nvgSetTextAlign(NVGcontext* ctx, int align);
-
-// Sets the font face based on specified id of current text style.
-void nvgSetFontFaceById(NVGcontext* ctx, int font);
+// static void nvgSetLetterSpacing(NVGcontext* ctx, float spacing) { ctx->state.letterSpacing = spacing;}
 
 // Sets the font face based on specified name of current text style.
-void nvgSetFontFaceByName(NVGcontext* ctx, const char* font);
+// void nvgSetFontFaceByName(NVGcontext* ctx, const char* font);
 
 // Draws text string at specified location. If end is specified only the sub-string up to the end is drawn.
 float nvgText(NVGcontext* ctx, float x, float y, const char* string, const char* end);
