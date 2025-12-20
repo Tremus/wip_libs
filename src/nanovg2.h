@@ -1290,7 +1290,7 @@ int nvgCreateFontMemAtIndex(
 // void nvgSetFontFaceByName(NVGcontext* ctx, const char* font);
 
 // Draws text string at specified location. If end is specified only the sub-string up to the end is drawn.
-int nvgText(NVGcontext* ctx, float x, float y, const char* string, const char* end);
+void nvgText(NVGcontext* ctx, float x, float y, const char* string, const char* end);
 
 // Draws multi-line text string at specified location wrapped at the specified width. If end is specified only the
 // sub-string up to the end is drawn. White space is stripped at the beginning of the rows, the text is split at word

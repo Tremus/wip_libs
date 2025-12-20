@@ -3028,11 +3028,11 @@ const NVGatlasRect* nvg__getGlyph(NVGcontext* ctx, uint32_t glyph_index, float f
     return &stub_rect;
 }
 
-void nvg__drawGlyph(NVGcontext* ctx, int pen_x, int pen_y, unsigned glyph_idx, float font_size)
+bool nvg__pushGlyph(NVGcontext* ctx, int pen_x, int pen_y, const NVGatlasRect* rect)
 {
-    const NVGatlasRect* rect = nvg__getGlyph(ctx, glyph_idx, font_size);
-
-    if (ctx->text_buffer_len < NVG_ARRLEN(ctx->text_buffer))
+    bool should_push = ctx->text_buffer_len < NVG_ARRLEN(ctx->text_buffer);
+    should_push &= rect->img_view.id != 0;
+    if (should_push)
     {
         uint32_t tex_l = rect->x;
         uint32_t tex_t = rect->y;
@@ -3044,7 +3044,7 @@ void nvg__drawGlyph(NVGcontext* ctx, int pen_x, int pen_y, unsigned glyph_idx, f
         xassert(tex_r >= 0 && tex_r < NVG_ATLAS_WIDTH);
         xassert(tex_b >= 0 && tex_b < NVG_ATLAS_HEIGHT);
 
-        // atlas coordinates to INT16 normalised texture coordinates
+        // atlas coordinates to UINT16 normalised texture coordinates
         tex_l <<= NVG_ATLAS_UINT16_SHIFT;
         tex_t <<= NVG_ATLAS_UINT16_SHIFT;
         tex_r <<= NVG_ATLAS_UINT16_SHIFT;
@@ -3076,9 +3076,16 @@ void nvg__drawGlyph(NVGcontext* ctx, int pen_x, int pen_y, unsigned glyph_idx, f
 
         ctx->text_buffer_len++;
     }
+    return should_push;
 }
 
-int nvgText(NVGcontext* ctx, float x, float y, const char* text_start, const char* text_end)
+void nvg__drawGlyph(NVGcontext* ctx, int pen_x, int pen_y, unsigned glyph_idx, float font_size)
+{
+    const NVGatlasRect* rect = nvg__getGlyph(ctx, glyph_idx, font_size);
+    nvg__pushGlyph(ctx, pen_x, pen_y, rect);
+}
+
+void nvgText(NVGcontext* ctx, float x, float y, const char* text_start, const char* text_end)
 {
     if (text_end == NULL)
         text_end = text_start + strlen(text_start);
@@ -3093,8 +3100,8 @@ int nvgText(NVGcontext* ctx, float x, float y, const char* text_start, const cha
     x_scale                              /= ctx->backingScaleFactor;
     y_scale                              /= ctx->backingScaleFactor;
 
-    int max_font_height_pixels = (ctx->ft_face->size->metrics.ascender - ctx->ft_face->size->metrics.descender) >> 6;
-    int pen_y_offset           = max_font_height_pixels + (ctx->ft_face->size->metrics.descender >> 6);
+    int max_font_height_pixels = (FtSizeMetrics->ascender - FtSizeMetrics->descender) >> 6;
+    int pen_y_offset           = max_font_height_pixels + (FtSizeMetrics->descender >> 6);
 #endif
 #if defined(NVG_FONT_STB_TRUETYPE)
     int ascent = 0, descent = 0, lineGap = 0;
@@ -3121,14 +3128,21 @@ int nvgText(NVGcontext* ctx, float x, float y, const char* text_start, const cha
 
             int glyph_x = ((GlyphX >> 6) * x_scale) >> 16;
             int glyph_y = ((GlyphY >> 6) * y_scale) >> 16;
-            nvg__drawGlyph(ctx, x + glyph_x, y + glyph_y + pen_y_offset, Glyph->Id, ctx->state.fontSize);
+
+            const NVGatlasRect* rect = nvg__getGlyph(ctx, Glyph->Id, ctx->state.fontSize);
+            bool pushed = nvg__pushGlyph(ctx, x + glyph_x, y + glyph_y + pen_y_offset, rect);
+
+            if (pushed)
+            {
+                xassert(rect->img_view.id);
+
+            }
 
             CursorX += Glyph->AdvanceX;
             CursorY += Glyph->AdvanceY;
         }
     }
 
-    return 0;
     /*
     NVGstate*    state = &ctx->state;
     FONStextIter iter, prevIter;
