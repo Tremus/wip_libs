@@ -3401,12 +3401,12 @@ void nvgTextBox(NVGcontext* ctx, float x, float y, float breakRowWidth, const ch
         for (i = 0; i < nrows; i++)
         {
             NVGtextRow* row = &rows[i];
-            if (halign & NVG_ALIGN_LEFT)
-                nvgText(ctx, x, y, row->start, row->end);
-            else if (halign & NVG_ALIGN_CENTER)
+            if (halign & NVG_ALIGN_CENTER)
                 nvgText(ctx, x + breakRowWidth * 0.5f - row->width * 0.5f, y, row->start, row->end);
             else if (halign & NVG_ALIGN_RIGHT)
                 nvgText(ctx, x + breakRowWidth - row->width, y, row->start, row->end);
+            else // align left
+                nvgText(ctx, x, y, row->start, row->end);
             y += lineh * state->lineHeight;
         }
         string = rows[nrows - 1].next;
@@ -3419,57 +3419,59 @@ int nvgTextGlyphPositions(
     NVGcontext*       ctx,
     float             x,
     float             y,
-    const char*       string,
-    const char*       end,
+    const char*       text_start,
+    const char*       text_end,
     NVGglyphPosition* positions,
     int               maxPositions)
 {
-    NVG_ASSERT(false); // TODO
-    return 0;
-    /*
-    NVGstate*    state    = &ctx->state;
-    float        scale    = nvg__getFontScale(state) * ctx->devicePxRatio;
-    float        invscale = 1.0f / scale;
-    FONStextIter iter, prevIter;
-    FONSquad     q;
-    int          npos = 0;
+    int num_positions = 0;
 
-    if (state->fontId == FONS_INVALID)
-        return 0;
+    if (text_end == NULL)
+        text_end = text_start + strlen(text_start);
+    const size_t text_len = text_end - text_start;
 
-    if (end == NULL)
-        end = string + strlen(string);
+    FT_Set_Pixel_Sizes(ctx->ft_face, 0, ctx->state.fontSize * ctx->backingScaleFactor);
 
-    if (string == end)
-        return 0;
+#if defined(NVG_FONT_FREETYPE)
+    const FT_Size_Metrics* FtSizeMetrics  = &ctx->ft_face->size->metrics;
+    int                    x_scale        = FtSizeMetrics->x_scale;
+    int                    y_scale        = FtSizeMetrics->y_scale;
+    x_scale                              /= ctx->backingScaleFactor;
+    y_scale                              /= ctx->backingScaleFactor;
+#endif
+#if defined(NVG_FONT_STB_TRUETYPE)
+    xassert(false); // TODO
+#endif
 
-    fonsSetSize(ctx->fs, state->fontSize * scale);
-    fonsSetSpacing(ctx->fs, state->letterSpacing * scale);
-    fonsSetBlur(ctx->fs, state->fontBlur * scale);
-    fonsSetAlign(ctx->fs, state->textAlign);
-    fonsSetFont(ctx->fs, state->fontId);
+    kbts_ShapeBegin(ctx->kbts, KBTS_DIRECTION_DONT_KNOW, KBTS_LANGUAGE_DONT_KNOW);
+    kbts_ShapeUtf8(ctx->kbts, text_start, text_end - text_start, KBTS_USER_ID_GENERATION_MODE_CODEPOINT_INDEX);
+    kbts_ShapeEnd(ctx->kbts);
 
-    fonsTextIterInit(ctx->fs, &iter, x * scale, y * scale, string, end, FONS_GLYPH_BITMAP_OPTIONAL);
-    prevIter = iter;
-    while (fonsTextIterNext(ctx->fs, &iter, &q))
+    kbts_run Run;
+    int      CursorX = 0;
+    while (kbts_ShapeRun(ctx->kbts, &Run))
     {
-        if (iter.prevGlyphIndex < 0 && nvg__allocTextAtlas(ctx))
-        { // can not retrieve glyph?
-            iter = prevIter;
-            fonsTextIterNext(ctx->fs, &iter, &q); // try again
+        kbts_glyph* Glyph;
+        while (kbts_GlyphIteratorNext(&Run.Glyphs, &Glyph))
+        {
+            int err = FT_Load_Glyph(ctx->ft_face, Glyph->Id, FT_LOAD_DEFAULT);
+            xassert(!err);
+
+            FT_GlyphSlot glyph = ctx->ft_face->glyph;
+
+            int GlyphX = CursorX + Glyph->OffsetX;
+
+            int minx = (GlyphX * x_scale) >> 22;
+            int maxx = ((GlyphX + Glyph->AdvanceX) * x_scale) >> 22;
+
+            if (num_positions < maxPositions)
+                positions[num_positions++] = (NVGglyphPosition){minx, maxx};
+
+            CursorX += Glyph->AdvanceX;
         }
-        prevIter             = iter;
-        positions[npos].str  = iter.str;
-        positions[npos].x    = iter.x * invscale;
-        positions[npos].minx = nvg__minf(iter.x, q.x0) * invscale;
-        positions[npos].maxx = nvg__maxf(iter.nextx, q.x1) * invscale;
-        npos++;
-        if (npos >= maxPositions)
-            break;
     }
 
-    return npos;
-    */
+    return num_positions;
 }
 
 enum NVGcodepointType

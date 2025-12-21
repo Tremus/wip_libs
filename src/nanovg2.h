@@ -311,9 +311,9 @@ typedef struct NVGcompositeOperationState
 
 typedef struct NVGglyphPosition
 {
-    const char* str;        // Position of the glyph in the input string.
-    float       x;          // The x-coordinate of the logical glyph position.
-    float       minx, maxx; // The bounds of the glyph shape.
+    // const char* str;        // Position of the glyph in the input string.
+    // float       x;          // The x-coordinate of the logical glyph position.
+    int16_t minx, maxx; // The bounds of the glyph shape.
 } NVGglyphPosition;
 
 typedef struct NVGtextRow
