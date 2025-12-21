@@ -171,3 +171,20 @@ void linked_arena_prune(LinkedArena* arena)
         arena = arena->next;
     }
 }
+
+void* linked_arena_get_top(LinkedArena* arena)
+{
+    char* top = NULL;
+
+    while (arena)
+    {
+        if (arena->size)
+        {
+            char* base = (char*)(arena + 1);
+            top        = base + arena->size;
+        }
+        arena = arena->next;
+    }
+    xassert(top);
+    return top;
+}

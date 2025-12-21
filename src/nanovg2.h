@@ -713,6 +713,7 @@ typedef struct NVGatlas
 typedef struct NVGcontext
 {
     LinkedArena* arena;
+    void*        arena_top;
 
     float*       commands;
     int          ccommands;

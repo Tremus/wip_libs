@@ -45,6 +45,8 @@ void  linked_arena_release(LinkedArena* arena, const void* const ptr);
 void linked_arena_clear(LinkedArena* arena);
 // Destroy unused arenas. Won't destroy first item
 void linked_arena_prune(LinkedArena* arena);
+// Finds the top of the allocation stack
+void* linked_arena_get_top(LinkedArena* arena);
 
 #ifdef NDEBUG
 #define LINKED_ARENA_TAGGED_LEAK_DETECT_BEGIN(arena, tag)

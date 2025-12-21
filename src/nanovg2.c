@@ -4546,6 +4546,14 @@ void nvgBeginFrame(NVGcontext* ctx, int backingScaleFactor)
 {
     nvgReset(ctx);
 
+    // are you sure you're not leaking memory, or preallocating enough memory at the start?
+    NVG_ASSERT(ctx->arena->next == 0);
+
+    // Oh oh, you may be in a modal loop, or you forgot to call nvgEndFrame()
+    // Be sure to call nvgEndFrame() before making any system API calls
+    NVG_ASSERT(ctx->arena_top == NULL);
+    ctx->arena_top = linked_arena_get_top(ctx->arena);
+
     ctx->frame_stats.drawCallCount  = 0;
     ctx->frame_stats.fillTriCount   = 0;
     ctx->frame_stats.strokeTriCount = 0;
@@ -4791,6 +4799,10 @@ void nvgEndFrame(NVGcontext* ctx)
         sg_update_buffer(ctx->indexBuf, &(sg_range){ctx->indexes, nbytes});
 
     int ncommands = snvg_consume_commands(ctx, ctx->first_command);
+
+    xassert(ctx->arena_top != NULL);
+    linked_arena_release(ctx->arena, ctx->arena_top);
+    ctx->arena_top = NULL;
 }
 
 static int sgnvg__maxVertCount(const NVGpath* paths, int npaths)
