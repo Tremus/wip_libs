@@ -43,10 +43,9 @@ void main() {
         is_right  ? obj.coord_bottomright.x : obj.coord_topleft.x,
         is_bottom ? obj.coord_bottomright.y : obj.coord_topleft.y
     );
+    pos = (pos - u_xy_offset) * 2 / u_view_size - vec2(1);
 
-    float x = 2.0 * (pos.x - u_xy_offset.x) / u_view_size.x - 1.0;
-    float y = 1.0 - 2.0 * (pos.y - u_xy_offset.y) / u_view_size.y;
-	gl_Position = vec4(x, y, 0, 1);
+	gl_Position = vec4(pos.x, -pos.y, 0, 1);
 
     vec2 tex_topleft = unpackUnorm2x16(obj.tex_topleft);
     vec2 tex_bottomright = unpackUnorm2x16(obj.tex_bottomright);

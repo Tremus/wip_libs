@@ -696,8 +696,8 @@ typedef struct NVGatlasRect
 
     int16_t x, y, w, h;
 
-    int16_t pen_offset_x;
-    int16_t pen_offset_y;
+    int16_t bearing_x;
+    int16_t bearing_y;
 
     sg_view img_view;
 } NVGatlasRect;
@@ -768,7 +768,7 @@ typedef struct NVGcontext
     sg_sampler  text_smp;
 
 #ifndef NVG_MAX_GLYPHS
-#define NVG_MAX_GLYPHS 128
+#define NVG_MAX_GLYPHS 1024
 #endif
     size_t        text_buffer_len;
     text_buffer_t text_buffer[NVG_MAX_GLYPHS];

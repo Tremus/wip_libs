@@ -2784,9 +2784,6 @@ int nvg__renderGlyph(NVGcontext* ctx, uint32_t glyph_index, float font_size)
     xassert(ctx->current_atlas.idx < xarr_len(ctx->glyph_atlases));
     NVGatlas* atlas = ctx->glyph_atlases + ctx->current_atlas.idx;
 
-    const float DPI = 96;
-    FT_Set_Char_Size(ctx->ft_face, 0, font_size * 64 * ctx->backingScaleFactor, DPI, DPI);
-
     int err = FT_Load_Glyph(ctx->ft_face, glyph_index, FT_LOAD_DEFAULT);
     xassert(!err);
 
@@ -2840,11 +2837,13 @@ int nvg__renderGlyph(NVGcontext* ctx, uint32_t glyph_index, float font_size)
 
         if (num_packed)
         {
+            int expected_height = glyph->metrics.height >> 6;
+            xassert(expected_height == bmp->rows);
             NVGatlasRect arect;
             arect.header.glyphid   = glyph_index;
             arect.header.font_size = font_size;
-            arect.pen_offset_x     = glyph->bitmap_left / ctx->backingScaleFactor;
-            arect.pen_offset_y     = glyph->bitmap_top / ctx->backingScaleFactor;
+            arect.bearing_x        = (glyph->metrics.horiBearingX >> 6) / ctx->backingScaleFactor;
+            arect.bearing_y        = (glyph->metrics.horiBearingY >> 6) / ctx->backingScaleFactor;
             arect.x                = rect.x + RECTPACK_PADDING;
             arect.y                = rect.y + RECTPACK_PADDING;
             arect.w                = width_pixels;
@@ -3049,8 +3048,8 @@ bool nvg__pushGlyph(NVGcontext* ctx, int pen_x, int pen_y, const NVGatlasRect* r
         xassert(tex_r < (1 << 16));
         xassert(tex_b < (1 << 16));
 
-        int glyph_left   = pen_x + (int)rect->pen_offset_x;
-        int glyph_top    = pen_y - (int)rect->pen_offset_y;
+        int glyph_left   = pen_x + (int)rect->bearing_x;
+        int glyph_top    = pen_y - (int)rect->bearing_y;
         int glyph_right  = glyph_left + (int)rect->w / ctx->backingScaleFactor;
         int glyph_bottom = glyph_top + (int)rect->h / ctx->backingScaleFactor;
 
@@ -3115,8 +3114,7 @@ void nvgText(NVGcontext* ctx, float x, float y, const char* text_start, const ch
     if (text_end == NULL)
         text_end = text_start + strlen(text_start);
 
-    const float DPI = 96;
-    FT_Set_Char_Size(ctx->ft_face, 0, ctx->state.fontSize * 64 * ctx->backingScaleFactor, DPI, DPI);
+    FT_Set_Pixel_Sizes(ctx->ft_face, 0, ctx->state.fontSize * ctx->backingScaleFactor);
 
     kbts_ShapeBegin(ctx->kbts, KBTS_DIRECTION_DONT_KNOW, KBTS_LANGUAGE_DONT_KNOW);
     kbts_ShapeUtf8(ctx->kbts, text_start, text_end - text_start, KBTS_USER_ID_GENERATION_MODE_CODEPOINT_INDEX);
@@ -3129,8 +3127,8 @@ void nvgText(NVGcontext* ctx, float x, float y, const char* text_start, const ch
     x_scale                              /= ctx->backingScaleFactor;
     y_scale                              /= ctx->backingScaleFactor;
 
-    int max_font_height_pixels = (FtSizeMetrics->ascender - FtSizeMetrics->descender) >> 6;
-    int pen_y_offset           = max_font_height_pixels + (FtSizeMetrics->descender >> 6);
+    int ascent  = FtSizeMetrics->ascender >> 6;
+    int descent = FtSizeMetrics->descender >> 6;
 #endif
 #if defined(NVG_FONT_STB_TRUETYPE)
     int ascent = 0, descent = 0, lineGap = 0;
@@ -3196,13 +3194,26 @@ void nvgText(NVGcontext* ctx, float x, float y, const char* text_start, const ch
     int text_px_bottom = ((CursorY >> 6) * y_scale) >> 16;
 
     // TODO: handle alignment
-    int offset_x = 0, offset_y = 0;
+    const int alignment = ctx->state.textAlign;
+    if (alignment & NVG_ALIGN_CENTER)
+        x -= text_px_right / 2;
+    else if (alignment & NVG_ALIGN_RIGHT)
+        x -= text_px_right;
+
+    // y += pen_y_offset;
+    if (alignment & NVG_ALIGN_TOP)
+    {
+        y += ascent;
+    }
+    if (alignment & NVG_ALIGN_MIDDLE)
+    {
+        y -= descent;
+    }
 
     // Glyphs we need to render may live across several glyph atlases
     // Here we will attempt to batch all glyph draws sharing the same atlas
-    // We may perform multiple passes over the glyph_pos buffer as we put all glyphs sharing a buffer into a batch at a
-    // time, and build a
-
+    // We may perform multiple passes over the glyph_pos buffer as we put all glyphs sharing a buffer into a batch
+    // at a time, and build a
     NVGglyphPosition2* glyph_pos_2 = linked_arena_alloc(ctx->arena, sizeof(*glyph_pos_2) * glyph_pos_len);
 
     int                glyphs_consumed      = 0;
