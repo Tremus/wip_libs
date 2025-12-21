@@ -3073,17 +3073,10 @@ bool nvg__pushGlyph(NVGcontext* ctx, int pen_x, int pen_y, const NVGatlasRect* r
     return should_push;
 }
 
-void nvg__drawGlyph(NVGcontext* ctx, int pen_x, int pen_y, unsigned glyph_idx, float font_size)
-{
-    const NVGatlasRect* rect = nvg__getGlyph(ctx, glyph_idx, font_size);
-    nvg__pushGlyph(ctx, pen_x, pen_y, rect);
-}
-
 typedef struct NVGglyphPosition2
 {
-    uint32_t     glyph_id;
-    int16_t      x, y;
     NVGatlasRect rect;
+    int          x, y;
 } NVGglyphPosition2;
 
 SGNVGcommand* sgnvg__allocCommand(NVGcontext* ctx, enum SGNVGcommandType type, const char* label);
@@ -3113,12 +3106,9 @@ void nvgText(NVGcontext* ctx, float x, float y, const char* text_start, const ch
     LINKED_ARENA_LEAK_DETECT_BEGIN(ctx->arena);
     if (text_end == NULL)
         text_end = text_start + strlen(text_start);
+    const size_t text_len = text_end - text_start;
 
     FT_Set_Pixel_Sizes(ctx->ft_face, 0, ctx->state.fontSize * ctx->backingScaleFactor);
-
-    kbts_ShapeBegin(ctx->kbts, KBTS_DIRECTION_DONT_KNOW, KBTS_LANGUAGE_DONT_KNOW);
-    kbts_ShapeUtf8(ctx->kbts, text_start, text_end - text_start, KBTS_USER_ID_GENERATION_MODE_CODEPOINT_INDEX);
-    kbts_ShapeEnd(ctx->kbts);
 
 #if defined(NVG_FONT_FREETYPE)
     const FT_Size_Metrics* FtSizeMetrics  = &ctx->ft_face->size->metrics;
@@ -3126,6 +3116,10 @@ void nvgText(NVGcontext* ctx, float x, float y, const char* text_start, const ch
     int                    y_scale        = FtSizeMetrics->y_scale;
     x_scale                              /= ctx->backingScaleFactor;
     y_scale                              /= ctx->backingScaleFactor;
+
+    int ascent  = FtSizeMetrics->ascender >> 6;
+    int descent = FtSizeMetrics->descender >> 6;
+    int height  = FtSizeMetrics->height >> 6;
 #endif
 #if defined(NVG_FONT_STB_TRUETYPE)
     int ascent = 0, descent = 0, lineGap = 0;
@@ -3139,18 +3133,18 @@ void nvgText(NVGcontext* ctx, float x, float y, const char* text_start, const ch
     int y_scale = 32768;
 #endif
 
-    const size_t text_len = text_end - text_start;
-
+    // TODO: Create option to cache this text
     size_t             glyph_pos_len = 0;
     const size_t       glyph_pos_cap = text_len * 2;
     NVGglyphPosition2* glyph_pos     = linked_arena_alloc(ctx->arena, sizeof(*glyph_pos) * glyph_pos_cap);
 
     int text_ymax = 0, text_ymin = 0;
 
-    // TODO: build up this array to cache all text.
-    // Then handle actual alignments and build comamnnds for GPU handling sg_view ids across multipole atlases
-
     // Layout runs naively left to right.
+
+    kbts_ShapeBegin(ctx->kbts, KBTS_DIRECTION_DONT_KNOW, KBTS_LANGUAGE_DONT_KNOW);
+    kbts_ShapeUtf8(ctx->kbts, text_start, text_len, KBTS_USER_ID_GENERATION_MODE_CODEPOINT_INDEX);
+    kbts_ShapeEnd(ctx->kbts);
 
     kbts_run Run;
     int      CursorX = 0, CursorY = 0;
@@ -3162,8 +3156,8 @@ void nvgText(NVGcontext* ctx, float x, float y, const char* text_start, const ch
             int GlyphX = CursorX + Glyph->OffsetX;
             int GlyphY = CursorY + Glyph->OffsetY;
 
-            int glyph_px_x = ((GlyphX >> 6) * x_scale) >> 16;
-            int glyph_px_y = ((GlyphY >> 6) * y_scale) >> 16;
+            int glyph_px_x = (GlyphX * x_scale) >> 22;
+            int glyph_px_y = (GlyphY * y_scale) >> 22;
 
             xassert(glyph_px_x >= 0);
             xassert(glyph_px_y >= 0);
@@ -3182,8 +3176,7 @@ void nvgText(NVGcontext* ctx, float x, float y, const char* text_start, const ch
 
             if (add_to_metadata)
             {
-                glyph_pos[glyph_pos_len++] =
-                    (NVGglyphPosition2){.glyph_id = Glyph->Id, .x = glyph_px_x, .y = glyph_px_y, .rect = *rect};
+                glyph_pos[glyph_pos_len++] = (NVGglyphPosition2){.x = glyph_px_x, .y = glyph_px_y, .rect = *rect};
             }
 
             CursorX += Glyph->AdvanceX;
@@ -3191,8 +3184,7 @@ void nvgText(NVGcontext* ctx, float x, float y, const char* text_start, const ch
         }
     }
 
-    int text_px_right = ((CursorX >> 6) * x_scale) >> 16;
-    // int text_px_bottom = ((CursorY >> 6) * y_scale) >> 16;
+    int text_px_right = (CursorX * x_scale) >> 22;
 
     // TODO: handle alignment
     const int alignment = ctx->state.textAlign;
@@ -3207,8 +3199,11 @@ void nvgText(NVGcontext* ctx, float x, float y, const char* text_start, const ch
     // actually looks good, but it strips some control from the user
     if (alignment & NVG_ALIGN_MIDDLE)
     {
-        y += text_ymax;
-        y -= (text_ymax - text_ymin) / 2;
+        // y += text_ymax;
+        // y -= (text_ymax - text_ymin) / 2;
+        // y -= ascent / 2;
+        y += ascent;
+        y -= height / 2;
     }
     else if (alignment & NVG_ALIGN_TOP)
     {
