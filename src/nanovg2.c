@@ -3126,9 +3126,6 @@ void nvgText(NVGcontext* ctx, float x, float y, const char* text_start, const ch
     int                    y_scale        = FtSizeMetrics->y_scale;
     x_scale                              /= ctx->backingScaleFactor;
     y_scale                              /= ctx->backingScaleFactor;
-
-    int ascent  = FtSizeMetrics->ascender >> 6;
-    int descent = FtSizeMetrics->descender >> 6;
 #endif
 #if defined(NVG_FONT_STB_TRUETYPE)
     int ascent = 0, descent = 0, lineGap = 0;
@@ -3148,10 +3145,13 @@ void nvgText(NVGcontext* ctx, float x, float y, const char* text_start, const ch
     const size_t       glyph_pos_cap = text_len * 2;
     NVGglyphPosition2* glyph_pos     = linked_arena_alloc(ctx->arena, sizeof(*glyph_pos) * glyph_pos_cap);
 
+    int text_ymax = 0, text_ymin = 0;
+
     // TODO: build up this array to cache all text.
     // Then handle actual alignments and build comamnnds for GPU handling sg_view ids across multipole atlases
 
     // Layout runs naively left to right.
+
     kbts_run Run;
     int      CursorX = 0, CursorY = 0;
     while (kbts_ShapeRun(ctx->kbts, &Run))
@@ -3169,16 +3169,19 @@ void nvgText(NVGcontext* ctx, float x, float y, const char* text_start, const ch
             xassert(glyph_px_y >= 0);
 
             const NVGatlasRect* rect = nvg__getGlyph(ctx, Glyph->Id, ctx->state.fontSize);
-            // bool pushed = nvg__pushGlyph(ctx, x + glyph_px_x, y + glyph_px_y + pen_y_offset, rect);
 
             bool add_to_metadata  = glyph_pos_len < glyph_pos_cap;
             add_to_metadata      &= rect->img_view.id != 0;
             // add_to_metadata &= pushed;
 
+            int glyph_ymax = rect->bearing_y;
+            int glyph_ymin = glyph_ymax - rect->h;
+
+            text_ymax = xm_maxi(glyph_ymax, text_ymax);
+            text_ymin = xm_mini(glyph_ymin, text_ymin);
+
             if (add_to_metadata)
             {
-                // xassert(rect->img_view.id);
-                // metadata[metadata_len++] = (struct NVGglyphMetadata){rect, glyph_px_x, glyph_px_y + pen_y_offset};
                 glyph_pos[glyph_pos_len++] =
                     (NVGglyphPosition2){.glyph_id = Glyph->Id, .x = glyph_px_x, .y = glyph_px_y, .rect = *rect};
             }
@@ -3188,10 +3191,8 @@ void nvgText(NVGcontext* ctx, float x, float y, const char* text_start, const ch
         }
     }
 
-    // TODO: use floating point maths to find boundaries and consider ROUNDING to the nearest pixel
-    // Using integer maths in the regular freetype way make you floor all these numbers
-    int text_px_right  = ((CursorX >> 6) * x_scale) >> 16;
-    int text_px_bottom = ((CursorY >> 6) * y_scale) >> 16;
+    int text_px_right = ((CursorX >> 6) * x_scale) >> 16;
+    // int text_px_bottom = ((CursorY >> 6) * y_scale) >> 16;
 
     // TODO: handle alignment
     const int alignment = ctx->state.textAlign;
@@ -3200,14 +3201,22 @@ void nvgText(NVGcontext* ctx, float x, float y, const char* text_start, const ch
     else if (alignment & NVG_ALIGN_RIGHT)
         x -= text_px_right;
 
-    // y += pen_y_offset;
-    if (alignment & NVG_ALIGN_TOP)
-    {
-        y += ascent;
-    }
+    // By taking the ymin/ymax of the entire run of text, we can tightly fit the text vertically to where the user has
+    // requested
+    // If we use the ascender/descender metrics from Freetype, then there is always a little bit og padding. The padding
+    // actually looks good, but it strips some control from the user
     if (alignment & NVG_ALIGN_MIDDLE)
     {
-        y -= descent;
+        y += text_ymax;
+        y -= (text_ymax - text_ymin) / 2;
+    }
+    else if (alignment & NVG_ALIGN_TOP)
+    {
+        y += text_ymax;
+    }
+    else if (alignment & NVG_ALIGN_BOTTOM)
+    {
+        y += text_ymin;
     }
 
     // Glyphs we need to render may live across several glyph atlases
