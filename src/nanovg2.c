@@ -240,9 +240,10 @@ void main(void) {
 #include <stdio.h>
 #include <stdlib.h>
 
-#include <xhl/files.h>
-#include <xhl/array.h>
 #include <kb_text_shape.h>
+#include <xhl/array.h>
+#include <xhl/files.h>
+#include <xhl/maths.h>
 
 #include <dualfilter.glsl.h>
 #include <nanovg_sokol.glsl.h>
@@ -290,7 +291,6 @@ void main(void) {
 #define NVG_REALLOC(ptr, sz) realloc(ptr, sz)
 #define NVG_FREE(ptr)        free(ptr)
 #endif
-
 
 #if defined(NVG_FONT_FREETYPE_SINGLECHANNEL) || defined(NVG_FONT_FREETYPE_MULTICHANNEL)
 #include <ft2build.h>
@@ -405,9 +405,9 @@ static float nvg__normalize(float* x, float* y)
 
 static void nvg__setBackingScaleFactor(NVGcontext* ctx, int ratio)
 {
-    ctx->tessTol       = 0.25f / ratio;
-    ctx->distTol       = 0.01f / ratio;
-    ctx->fringeWidth   = 1.0f / ratio;
+    ctx->tessTol            = 0.25f / ratio;
+    ctx->distTol            = 0.01f / ratio;
+    ctx->fringeWidth        = 1.0f / ratio;
     ctx->backingScaleFactor = ratio;
 }
 
@@ -500,12 +500,12 @@ void nvgReset(NVGcontext* ctx)
     state->scissor.extent[0] = -1.0f;
     state->scissor.extent[1] = -1.0f;
 
-    state->fontSize      = 16.0f;
+    state->fontSize = 16.0f;
     // state->letterSpacing = 0.0f;
-    state->lineHeight    = 1.0f;
+    state->lineHeight = 1.0f;
     // state->fontBlur      = 0.0f;
-    state->textAlign     = NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE;
-    state->fontId        = 0;
+    state->textAlign = NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE;
+    state->fontId    = 0;
 }
 
 NVGcolour nvgRGBA(unsigned char r, unsigned char g, unsigned char b, unsigned char a)
@@ -2594,7 +2594,7 @@ int nvgCreateFontAtIndex(NVGcontext* ctx, const char* filename, const int fontIn
                 }
                 else
                 {
-                    font_id = i + 1;
+                    font_id   = i + 1;
                     sl->owned = 1;
                 }
             }
@@ -2606,20 +2606,13 @@ int nvgCreateFontAtIndex(NVGcontext* ctx, const char* filename, const int fontIn
     return font_id;
 }
 
-int nvgCreateFontMemAtIndex(
-    NVGcontext*    ctx,
-    unsigned char* data,
-    int            ndata,
-    const int      fontIndex)
+int nvgCreateFontMemAtIndex(NVGcontext* ctx, unsigned char* data, int ndata, const int fontIndex)
 {
     NVG_ASSERT(false); // TODO
     return 0;
 }
 
-int nvgCreateFont(NVGcontext* ctx, const char* filename)
-{
-    return nvgCreateFontAtIndex(ctx, filename, 0);
-}
+int nvgCreateFont(NVGcontext* ctx, const char* filename) { return nvgCreateFontAtIndex(ctx, filename, 0); }
 
 int nvgCreateFontMem(NVGcontext* ctx, unsigned char* data, int ndata)
 {
@@ -2679,9 +2672,9 @@ int nvgCreateFontMem(NVGcontext* ctx, unsigned char* data, int ndata)
 
 void nvgSetFontFaceById(NVGcontext* ctx, int font_id)
 {
-    NVGstate* state = &ctx->state;
-    int font_idx = font_id - 1;
-    bool is_valid = font_idx >= 0 && font_id < NVG_ARRLEN(ctx->fonts);
+    NVGstate* state    = &ctx->state;
+    int       font_idx = font_id - 1;
+    bool      is_valid = font_idx >= 0 && font_id < NVG_ARRLEN(ctx->fonts);
     NVG_ASSERT(is_valid);
     if (!is_valid)
         ctx->state.fontId = 0;
@@ -2690,17 +2683,16 @@ void nvgSetFontFaceById(NVGcontext* ctx, int font_id)
         state->fontId = font_id;
 
         NVGfontSlot* sl = &ctx->fonts[font_idx];
-    
-    #ifdef NVG_FONT_FREETYPE
+
+#ifdef NVG_FONT_FREETYPE
         int err = FT_New_Memory_Face(ctx->ft_lib, sl->data, sl->data_size, 0, &ctx->ft_face);
         xassert(!err);
-    #endif
-    
-    #ifdef NVG_FONT_STB_TRUETYPE
-        NVG_ASSERT(false); // TODO
-    #endif
-    }
+#endif
 
+#ifdef NVG_FONT_STB_TRUETYPE
+        NVG_ASSERT(false); // TODO
+#endif
+    }
 }
 
 // void nvgSetFontFaceByName(NVGcontext* ctx, const char* font)
@@ -2769,9 +2761,9 @@ void nvgSetFontFaceById(NVGcontext* ctx, int font_id)
 //     return (det < 0);
 // }
 
-
 NVGatlas glyph_atlas_new()
 {
+    println("new atlas");
     sg_image img = sg_make_image(&(sg_image_desc){
         .width                = NVG_ATLAS_WIDTH,
         .height               = NVG_ATLAS_HEIGHT,
@@ -2821,7 +2813,8 @@ int nvg__renderGlyph(NVGcontext* ctx, uint32_t glyph_index, float font_size)
             sg_view_desc view_desc = sg_query_view_desc(atlas->img_view);
             sg_update_image(
                 view_desc.texture.image,
-                &(sg_image_data){.mip_levels[0] = {ctx->current_atlas.img_data, NVG_ATLAS_HEIGHT * NVG_ATLAS_ROW_STRIDE}});
+                &(sg_image_data){
+                    .mip_levels[0] = {ctx->current_atlas.img_data, NVG_ATLAS_HEIGHT * NVG_ATLAS_ROW_STRIDE}});
             atlas->dirty = false;
 
             // Clear rectpack
@@ -2879,7 +2872,8 @@ int nvg__renderGlyph(NVGcontext* ctx, uint32_t glyph_index, float font_size)
 
                 dst_view += 0;
 #else
-                unsigned char* dst = ctx->current_atlas.img_data + (arect.y + y) * NVG_ATLAS_ROW_STRIDE + arect.x * NVG_TEXTURE_CHANNELS;
+                unsigned char* dst =
+                    ctx->current_atlas.img_data + (arect.y + y) * NVG_ATLAS_ROW_STRIDE + arect.x * NVG_TEXTURE_CHANNELS;
                 unsigned char* src = bmp->buffer + y * bmp->pitch;
 
                 for (int x = 0; x < width_pixels; x++, dst += NVG_TEXTURE_CHANNELS, src += NVG_FT_BITMAP_WIDTH)
@@ -2936,8 +2930,8 @@ int nvg__renderGlyph(TextLayer* ctx, uint32_t glyph_index, float font_size)
             sg_view_desc view_desc = sg_query_view_desc(atlas->img_view);
             sg_update_image(
                 view_desc.texture.image,
-                &(sg_image_data){.mip_levels[0] = {ctx->current_atlas.img_data, NVG_ATLAS_HEIGHT * NVG_ATLAS_ROW_STRIDE}});
-            atlas->dirty = false;
+                &(sg_image_data){.mip_levels[0] = {ctx->current_atlas.img_data, NVG_ATLAS_HEIGHT *
+    NVG_ATLAS_ROW_STRIDE}}); atlas->dirty = false;
 
             // Clear rectpack
             memset(&ctx->current_atlas.ctx, 0, sizeof(ctx->current_atlas.ctx));
@@ -3031,6 +3025,7 @@ const NVGatlasRect* nvg__getGlyph(NVGcontext* ctx, uint32_t glyph_index, float f
 bool nvg__pushGlyph(NVGcontext* ctx, int pen_x, int pen_y, const NVGatlasRect* rect)
 {
     bool should_push = ctx->text_buffer_len < NVG_ARRLEN(ctx->text_buffer);
+    // NVG_ASSERT(should_push);
     should_push &= rect->img_view.id != 0;
     if (should_push)
     {
@@ -3085,10 +3080,44 @@ void nvg__drawGlyph(NVGcontext* ctx, int pen_x, int pen_y, unsigned glyph_idx, f
     nvg__pushGlyph(ctx, pen_x, pen_y, rect);
 }
 
+typedef struct NVGglyphPosition2
+{
+    uint32_t     glyph_id;
+    int16_t      x, y;
+    NVGatlasRect rect;
+} NVGglyphPosition2;
+
+SGNVGcommand* sgnvg__allocCommand(NVGcontext* ctx, enum SGNVGcommandType type, const char* label);
+
+void snvg_command_draw_text(
+    NVGcontext* ctx,
+    const char* label,
+    int         text_buf_start,
+    int         text_buf_end,
+    NVGcolour   col,
+    sg_view     atlas_view)
+{
+    SGNVGcommand*     cmd     = sgnvg__allocCommand(ctx, SGNVG_CMD_DRAW_TEXT, label);
+    SGNVGcommandText* cmdText = linked_arena_alloc_clear(ctx->frame_arena, sizeof(*cmdText));
+    NVG_ASSERT(label != NULL);
+
+    cmdText->text_buffer_start = text_buf_start;
+    cmdText->text_buffer_end   = text_buf_end;
+    cmdText->colour_fill       = col;
+    cmdText->atlas_view        = atlas_view;
+
+    cmd->payload.text = cmdText;
+}
+
 void nvgText(NVGcontext* ctx, float x, float y, const char* text_start, const char* text_end)
 {
+    LINKED_ARENA_LEAK_DETECT_BEGIN(ctx->arena);
     if (text_end == NULL)
         text_end = text_start + strlen(text_start);
+
+    const float DPI = 96;
+    FT_Set_Char_Size(ctx->ft_face, 0, ctx->state.fontSize * 64 * ctx->backingScaleFactor, DPI, DPI);
+
     kbts_ShapeBegin(ctx->kbts, KBTS_DIRECTION_DONT_KNOW, KBTS_LANGUAGE_DONT_KNOW);
     kbts_ShapeUtf8(ctx->kbts, text_start, text_end - text_start, KBTS_USER_ID_GENERATION_MODE_CODEPOINT_INDEX);
     kbts_ShapeEnd(ctx->kbts);
@@ -3115,6 +3144,15 @@ void nvgText(NVGcontext* ctx, float x, float y, const char* text_start, const ch
     int y_scale = 32768;
 #endif
 
+    const size_t text_len = text_end - text_start;
+
+    size_t             glyph_pos_len = 0;
+    const size_t       glyph_pos_cap = text_len * 2;
+    NVGglyphPosition2* glyph_pos     = linked_arena_alloc(ctx->arena, sizeof(*glyph_pos) * glyph_pos_cap);
+
+    // TODO: build up this array to cache all text.
+    // Then handle actual alignments and build comamnnds for GPU handling sg_view ids across multipole atlases
+
     // Layout runs naively left to right.
     kbts_run Run;
     int      CursorX = 0, CursorY = 0;
@@ -3126,22 +3164,109 @@ void nvgText(NVGcontext* ctx, float x, float y, const char* text_start, const ch
             int GlyphX = CursorX + Glyph->OffsetX;
             int GlyphY = CursorY + Glyph->OffsetY;
 
-            int glyph_x = ((GlyphX >> 6) * x_scale) >> 16;
-            int glyph_y = ((GlyphY >> 6) * y_scale) >> 16;
+            int glyph_px_x = ((GlyphX >> 6) * x_scale) >> 16;
+            int glyph_px_y = ((GlyphY >> 6) * y_scale) >> 16;
+
+            xassert(glyph_px_x >= 0);
+            xassert(glyph_px_y >= 0);
 
             const NVGatlasRect* rect = nvg__getGlyph(ctx, Glyph->Id, ctx->state.fontSize);
-            bool pushed = nvg__pushGlyph(ctx, x + glyph_x, y + glyph_y + pen_y_offset, rect);
+            // bool pushed = nvg__pushGlyph(ctx, x + glyph_px_x, y + glyph_px_y + pen_y_offset, rect);
 
-            if (pushed)
+            bool add_to_metadata  = glyph_pos_len < glyph_pos_cap;
+            add_to_metadata      &= rect->img_view.id != 0;
+            // add_to_metadata &= pushed;
+
+            if (add_to_metadata)
             {
-                xassert(rect->img_view.id);
-
+                // xassert(rect->img_view.id);
+                // metadata[metadata_len++] = (struct NVGglyphMetadata){rect, glyph_px_x, glyph_px_y + pen_y_offset};
+                glyph_pos[glyph_pos_len++] =
+                    (NVGglyphPosition2){.glyph_id = Glyph->Id, .x = glyph_px_x, .y = glyph_px_y, .rect = *rect};
             }
 
             CursorX += Glyph->AdvanceX;
             CursorY += Glyph->AdvanceY;
         }
     }
+
+    // TODO: use floating point maths to find boundaries and consider ROUNDING to the nearest pixel
+    // Using integer maths in the regular freetype way make you floor all these numbers
+    int text_px_right  = ((CursorX >> 6) * x_scale) >> 16;
+    int text_px_bottom = ((CursorY >> 6) * y_scale) >> 16;
+
+    // TODO: handle alignment
+    int offset_x = 0, offset_y = 0;
+
+    // Glyphs we need to render may live across several glyph atlases
+    // Here we will attempt to batch all glyph draws sharing the same atlas
+    // We may perform multiple passes over the glyph_pos buffer as we put all glyphs sharing a buffer into a batch at a
+    // time, and build a
+
+    NVGglyphPosition2* glyph_pos_2 = linked_arena_alloc(ctx->arena, sizeof(*glyph_pos_2) * glyph_pos_len);
+
+    int                glyphs_consumed      = 0;
+    NVGglyphPosition2* search_glyphs        = glyph_pos;
+    int                search_glyphs_len    = glyph_pos_len;
+    NVGglyphPosition2* remaining_glyphs     = glyph_pos_2;
+    int                remaining_glyphs_len = 0;
+
+    int inf_loop_protection = 0;
+    while (glyphs_consumed < glyph_pos_len)
+    {
+        NVG_ASSERT(++inf_loop_protection < 50);
+        sg_view target_atlas_view = search_glyphs[0].rect.img_view;
+        NVG_ASSERT(target_atlas_view.id != 0);
+
+        size_t text_buf_begin_len = ctx->text_buffer_len;
+
+        // Iterate through remainder of array, putting every glyph with matching atlas into our batch
+        for (int i = 0; i < search_glyphs_len; i++)
+        {
+            NVGglyphPosition2* gpos        = &search_glyphs[i];
+            bool               should_push = target_atlas_view.id == gpos->rect.img_view.id;
+
+            if (should_push)
+            {
+                bool did_push = nvg__pushGlyph(ctx, x + gpos->x, y + gpos->y, &gpos->rect);
+                glyphs_consumed++;
+            }
+            else
+            {
+                // Build temp buffer with remaining glyphs
+                remaining_glyphs[remaining_glyphs_len++] = *gpos;
+            }
+        }
+        size_t text_buf_end_len = ctx->text_buffer_len;
+
+        if (text_buf_end_len != text_buf_begin_len)
+        {
+            snvg_command_draw_text(
+                ctx,
+                NVG_LABEL(__FUNCTION__),
+                text_buf_begin_len,
+                text_buf_end_len,
+                ctx->state.paint.innerColour,
+                target_atlas_view);
+        }
+
+        NVG_ASSERT(glyphs_consumed <= glyph_pos_len);
+        if (glyphs_consumed < glyph_pos_len)
+        {
+            NVGglyphPosition2* tmp_glyphs = search_glyphs;
+
+            search_glyphs     = remaining_glyphs;
+            search_glyphs_len = remaining_glyphs_len;
+
+            remaining_glyphs     = tmp_glyphs;
+            remaining_glyphs_len = 0;
+        }
+    }
+
+    linked_arena_release(ctx->arena, glyph_pos_2);
+    linked_arena_release(ctx->arena, glyph_pos);
+
+    LINKED_ARENA_LEAK_DETECT_END(ctx->arena);
 
     /*
     NVGstate*    state = &ctx->state;
@@ -4412,9 +4537,10 @@ void nvgBeginFrame(NVGcontext* ctx, int backingScaleFactor)
     ctx->frame_stats.uploaded_bytes = 0;
 
     // Reset calls
-    ctx->nverts        = 0;
-    ctx->nindexes      = 0;
-    ctx->first_command = NULL;
+    ctx->nverts          = 0;
+    ctx->nindexes        = 0;
+    ctx->first_command   = NULL;
+    ctx->text_buffer_len = 0;
 
     linked_arena_clear(ctx->frame_arena);
 
@@ -4481,6 +4607,37 @@ int snvg_consume_commands(NVGcontext* ctx, SGNVGcommand* cmd)
             NVG_ASSERT(i == draws->num_calls && call == NULL); // Oh oh, you built the list wrong
             break;
         }
+        case SGNVG_CMD_DRAW_TEXT:
+        {
+            SGNVGcommandText* cmdText = cmd->payload.text;
+            sg_apply_pipeline(ctx->text_pip);
+
+            sg_bindings bind            = {0};
+            bind.views[VIEW_sb_text]    = ctx->text_sbv;
+            bind.views[VIEW_text_tex]   = cmdText->atlas_view;
+            bind.samplers[SMP_text_smp] = ctx->sampler_nearest; // nearest neighbour
+
+            sg_apply_bindings(&bind);
+
+            vs_text_uniforms_t vs_text_uniforms = {
+                .u_xy_offset  = {ctx->view.viewSize[0], ctx->view.viewSize[1]},
+                .u_view_size  = {ctx->view.viewSize[2], ctx->view.viewSize[3]},
+                .u_sbo_offset = cmdText->text_buffer_start,
+            };
+            sg_apply_uniforms(UB_vs_text_uniforms, &SG_RANGE(vs_text_uniforms));
+
+            fs_text_singlechannel_t fs_text_singlechannel = {
+                .u_colour[0] = cmdText->colour_fill.rgba[0],
+                .u_colour[1] = cmdText->colour_fill.rgba[1],
+                .u_colour[2] = cmdText->colour_fill.rgba[2],
+                .u_colour[3] = cmdText->colour_fill.rgba[3],
+            };
+            sg_apply_uniforms(UB_fs_text_singlechannel, &SG_RANGE(fs_text_singlechannel));
+
+            int N_draws = cmdText->text_buffer_end - cmdText->text_buffer_start;
+            sg_draw(0, 6 * N_draws, 1);
+            break;
+        }
         case SGNVG_CMD_IMAGE_FX:
         {
             SGNVGcommandImageFX* cmdfx = cmd->payload.fx;
@@ -4532,6 +4689,30 @@ void nvgEndFrame(NVGcontext* ctx)
     //     ctx->fontImages[0] = fontImage;
     //     ctx->fontImageIdx  = 0;
     // }
+
+    size_t num_atlases = xarr_len(ctx->glyph_atlases);
+    for (int i = 0; i < num_atlases; i++)
+    {
+        NVGatlas* atlas = ctx->glyph_atlases + ctx->current_atlas.idx;
+        if (atlas->dirty)
+        {
+            sg_view_desc view_desc = sg_query_view_desc(atlas->img_view);
+            sg_update_image(
+                view_desc.texture.image,
+                &(sg_image_data){
+                    .mip_levels[0] = {
+                        .ptr  = ctx->current_atlas.img_data,
+                        .size = NVG_ATLAS_HEIGHT * NVG_ATLAS_ROW_STRIDE,
+                    }});
+            atlas->dirty = false;
+        }
+    }
+
+    if (ctx->text_buffer_len)
+    {
+        sg_range sbo_range = {.ptr = ctx->text_buffer, .size = sizeof(ctx->text_buffer[0]) * ctx->text_buffer_len};
+        sg_update_buffer(ctx->text_sbo, &sbo_range);
+    }
 
     for (int i = 0; i < ctx->ntextures; i++)
     {
@@ -5591,11 +5772,12 @@ void snvg_command_custom(NVGcontext* ctx, void* uptr, SGNVGcustomFunc func, cons
 
 NVGcontext* nvgCreateContext(int flags)
 {
-    NVGcontext* ctx = (NVGcontext*)NVG_MALLOC(sizeof(NVGcontext));
-    int         i;
+    NVGcontext*  ctx            = NULL;
+    size_t       init_arena_cap = xm_minull(1024 * 64, sizeof(*ctx));
+    LinkedArena* arena          = linked_arena_create_ex(0, init_arena_cap);
 
-    NVG_ASSERT_GOTO(ctx != NULL, error);
-    memset(ctx, 0, sizeof(*ctx));
+    ctx        = linked_arena_alloc(arena, sizeof(*ctx));
+    ctx->arena = arena;
 
     ctx->frame_arena = linked_arena_create(1024 * 64);
     NVG_ASSERT_GOTO(ctx->frame_arena != NULL, error);
@@ -5607,7 +5789,7 @@ NVGcontext* nvgCreateContext(int flags)
     ctx->shader = sg_make_shader(nanovg_sg_shader_desc(sg_query_backend()));
     // else
     // ctx->shader = sg_make_shader(nanovg_sg_shader_desc(sg_query_backend()));
-    for (i = 0; i < NANOVG_SG_PIPELINE_CACHE_SIZE; i++)
+    for (int i = 0; i < NANOVG_SG_PIPELINE_CACHE_SIZE; i++)
     {
         for (enum SGNVGpipelineType t = 0; t < SGNVG_PIP_NUM_; t++)
         {
@@ -5762,7 +5944,7 @@ NVGcontext* nvgCreateContext(int flags)
         }};
 #endif
 
-    ctx->text_pip      = sg_make_pipeline(&pip_desc);
+    ctx->text_pip = sg_make_pipeline(&pip_desc);
 
     ctx->current_atlas.idx = 0;
     xarr_setcap(ctx->glyph_atlases, 16);
@@ -5770,7 +5952,7 @@ NVGcontext* nvgCreateContext(int flags)
     ctx->glyph_atlases[0] = glyph_atlas_new();
 
     xarr_setlen(ctx->current_atlas.nodes, (NVG_ATLAS_WIDTH * 2));
-    size_t img_size = NVG_ATLAS_HEIGHT * NVG_ATLAS_ROW_STRIDE;
+    size_t img_size             = NVG_ATLAS_HEIGHT * NVG_ATLAS_ROW_STRIDE;
     ctx->current_atlas.img_data = NVG_MALLOC(img_size);
     memset(ctx->current_atlas.img_data, 0, img_size);
     stbrp_init_target(
@@ -5790,7 +5972,6 @@ error:
 
 void nvgDestroyContext(NVGcontext* ctx)
 {
-    int i;
     if (ctx == NULL)
         return;
 
@@ -5800,7 +5981,7 @@ void nvgDestroyContext(NVGcontext* ctx)
     NVG_FREE(ctx->cache.verts);
 
     // if (ctx->fs)
-        // fonsDeleteInternal(ctx->fs);
+    // fonsDeleteInternal(ctx->fs);
     // for (i = 0; i < NVG_MAX_FONTIMAGES; i++)
     // {
     //     if (ctx->fontImages[i] != 0)
@@ -5814,7 +5995,7 @@ void nvgDestroyContext(NVGcontext* ctx)
     xarr_free(ctx->current_atlas.nodes);
     xarr_free(ctx->rects);
     xarr_free(ctx->glyph_atlases);
-    for (i = 0; i < NVG_ARRLEN(ctx->fonts); i++)
+    for (int i = 0; i < NVG_ARRLEN(ctx->fonts); i++)
     {
         NVGfontSlot* sl = ctx->fonts + i;
         if (sl->kbtr_font_ptr)
@@ -5828,7 +6009,7 @@ void nvgDestroyContext(NVGcontext* ctx)
 
     sg_destroy_shader(ctx->shader);
 
-    for (i = 0; i < NANOVG_SG_PIPELINE_CACHE_SIZE; i++)
+    for (int i = 0; i < NANOVG_SG_PIPELINE_CACHE_SIZE; i++)
     {
         for (enum SGNVGpipelineType t = 0; t < SGNVG_PIP_NUM_; t++)
         {
@@ -5850,7 +6031,7 @@ void nvgDestroyContext(NVGcontext* ctx)
     sg_dealloc_buffer(ctx->indexBuf);
 
     nvgDeleteImage(ctx, ctx->dummyTex);
-    for (i = 0; i < ctx->ntextures; i++)
+    for (int i = 0; i < ctx->ntextures; i++)
     {
         bool img_exists    = ctx->textures[i].img.id != 0;
         bool should_delete = (ctx->textures[i].flags & NVG_IMAGE_NODELETE) == 0;
@@ -5870,5 +6051,5 @@ void nvgDestroyContext(NVGcontext* ctx)
         linked_arena_destroy(ctx->frame_arena);
     }
 
-    NVG_FREE(ctx);
+    linked_arena_destroy(ctx->arena);
 }

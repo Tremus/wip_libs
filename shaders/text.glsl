@@ -14,7 +14,9 @@ layout(binding=0) readonly buffer sb_text {
 };
 
 layout(binding=0) uniform vs_text_uniforms {
-    vec2 size;
+    vec2 u_xy_offset;
+    vec2 u_view_size;
+    int  u_sbo_offset;
 };
 
 out vec2 texcoord;
@@ -24,7 +26,7 @@ void main() {
     uint v_idx = gl_VertexIndex / 6u;
     uint i_idx = gl_VertexIndex - v_idx * 6;
 
-    text_buffer obj = vtx[v_idx];
+    text_buffer obj = vtx[v_idx + u_sbo_offset];
 
     //  0.5f,  0.5f,
     // -0.5f, -0.5f,
@@ -42,11 +44,9 @@ void main() {
         is_bottom ? obj.coord_bottomright.y : obj.coord_topleft.y
     );
 
-    pos = (pos + pos) / size - vec2(1);
-    pos.y = -pos.y;
-
-    gl_Position = vec4(pos, 1, 1);
-
+    float x = 2.0 * (pos.x - u_xy_offset.x) / u_view_size.x - 1.0;
+    float y = 1.0 - 2.0 * (pos.y - u_xy_offset.y) / u_view_size.y;
+	gl_Position = vec4(x, y, 0, 1);
 
     vec2 tex_topleft = unpackUnorm2x16(obj.tex_topleft);
     vec2 tex_bottomright = unpackUnorm2x16(obj.tex_bottomright);

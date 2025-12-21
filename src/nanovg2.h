@@ -183,7 +183,8 @@ extern "C" {
 #define NVG_LABEL(...) 0
 #endif
 
-#if !defined(NVG_FONT_STB_TRUETYPE) && !defined(NVG_FONT_FREETYPE_SINGLECHANNEL) && !defined(NVG_FONT_FREETYPE_MULTICHANNEL)
+#if !defined(NVG_FONT_STB_TRUETYPE) && !defined(NVG_FONT_FREETYPE_SINGLECHANNEL) &&                                    \
+    !defined(NVG_FONT_FREETYPE_MULTICHANNEL)
 // #define NVG_FONT_STB_TRUETYPE
 // TODO: fix blending in multichannel
 // #define NVG_FONT_FREETYPE_MULTICHANNEL
@@ -198,7 +199,6 @@ extern "C" {
 #endif
 
 #include <text.glsl.h>
-
 
 typedef struct NVGcolour
 {
@@ -387,19 +387,20 @@ enum NVGpointFlags
 typedef struct NVGstate
 {
     NVGcompositeOperationState compositeOperation;
-    int                        shapeAntiAlias;
-    NVGpaint                   paint;
-    float                      miterLimit;
-    int                        lineJoin;
-    int                        lineCap;
-    float                      xform[6];
-    NVGscissor                 scissor;
-    float                      fontSize;
+
+    int        shapeAntiAlias;
+    NVGpaint   paint;
+    float      miterLimit;
+    int        lineJoin;
+    int        lineCap;
+    float      xform[6];
+    NVGscissor scissor;
+    float      fontSize;
     // float                      letterSpacing;
-    float                      lineHeight;
+    float lineHeight;
     // float                      fontBlur;
-    int                        textAlign;
-    int                        fontId;
+    int textAlign;
+    int fontId;
 } NVGstate;
 
 typedef struct NVGpoint
@@ -609,6 +610,15 @@ typedef struct SGNVGcommandNVG
     struct SGNVGcall* calls;
 } SGNVGcommandNVG;
 
+typedef struct SGNVGcommandText
+{
+    int text_buffer_start;
+    int text_buffer_end;
+    // TODO: support more colours
+    NVGcolour colour_fill;
+    sg_view   atlas_view;
+} SGNVGcommandText;
+
 typedef struct SGNVGcommandImageFX
 {
     // These are probably redundant and could be implied by the above params being > 0
@@ -636,6 +646,7 @@ enum SGNVGcommandType
     SGNVG_CMD_BEGIN_PASS,
     SGNVG_CMD_END_PASS,
     SGNVG_CMD_DRAW_NVG,
+    SGNVG_CMD_DRAW_TEXT,
     SGNVG_CMD_IMAGE_FX,
     SGNVG_CMD_CUSTOM,
 };
@@ -650,6 +661,7 @@ typedef struct SGNVGcommand
 
         SGNVGcommandBeginPass* beginPass;
         SGNVGcommandNVG*       drawNVG;
+        SGNVGcommandText*      text;
         SGNVGcommandImageFX*   fx;
         SGNVGcommandCustom*    custom;
     } payload;
@@ -659,10 +671,10 @@ typedef struct SGNVGcommand
 
 typedef struct NVGfontSlot
 {
-    void* kbtr_font_ptr;
-    void* data;
+    void*  kbtr_font_ptr;
+    void*  data;
     size_t data_size;
-    int owned;
+    int    owned;
 } NVGfontSlot;
 
 // Used to identify a unique glyph.
@@ -673,7 +685,7 @@ typedef union NVGatlasRectHeader
     {
         uint32_t glyphid;
         // TODO: this could probably be packed into an integer. To support sizes like 12.25, multiply & divide by 4
-        float    font_size;
+        float font_size;
     };
     uint64_t data;
 } NVGatlasRectHeader;
@@ -699,6 +711,8 @@ typedef struct NVGatlas
 
 typedef struct NVGcontext
 {
+    LinkedArena* arena;
+
     float*       commands;
     int          ccommands;
     int          ncommands;
@@ -736,8 +750,8 @@ typedef struct NVGcontext
     // This leaves 0 and <0 as invalid ids
     NVGfontSlot fonts[NVG_MAX_FONT_SLOTS];
 
-    NVGatlas* glyph_atlases;
-    NVGatlasRect*  rects;
+    NVGatlas*     glyph_atlases;
+    NVGatlasRect* rects;
 
     struct
     {
@@ -1238,7 +1252,7 @@ void nvgStroke(NVGcontext* ctx, float stroke_width);
 static void nvgSetFontSize(NVGcontext* ctx, float size) { ctx->state.fontSize = size; }
 
 // Sets the proportional line height of current text style. The line height is specified as multiple of font size.
-static void nvgSetTextLineHeight(NVGcontext* ctx, float lineHeight) {ctx->state.lineHeight = lineHeight; }
+static void nvgSetTextLineHeight(NVGcontext* ctx, float lineHeight) { ctx->state.lineHeight = lineHeight; }
 
 // Sets the text align of current text style, see NVGalign for options.
 static void nvgSetTextAlign(NVGcontext* ctx, int align) { ctx->state.textAlign = align; }
@@ -1257,11 +1271,7 @@ int nvgCreateFontAtIndex(NVGcontext* ctx, const char* filename, const int fontIn
 // Returns handle to the font.
 // Note: you are responsible for persisting the data for the duration of use in this program
 int nvgCreateFontMem(NVGcontext* ctx, unsigned char* data, int ndata);
-int nvgCreateFontMemAtIndex(
-    NVGcontext*    ctx,
-    unsigned char* data,
-    int            ndata,
-    const int      fontIndex);
+int nvgCreateFontMemAtIndex(NVGcontext* ctx, unsigned char* data, int ndata, const int fontIndex);
 
 // TODO: remove these features
 // Finds a loaded font of specified name, and returns handle to it, or -1 if the font is not found.
@@ -1278,7 +1288,6 @@ int nvgCreateFontMemAtIndex(
 
 // Resets fallback fonts by name.
 // void nvgResetFallbackFonts(NVGcontext* ctx, const char* baseFont);
-
 
 // Sets the blur of current text style.
 // static void nvgSetFontBlur(NVGcontext* ctx, float blur) { ctx->state.fontBlur = blur; }
