@@ -3384,9 +3384,6 @@ void nvgTextBox(NVGcontext* ctx, float x, float y, float breakRowWidth, const ch
     int        valign   = state->textAlign & (NVG_ALIGN_TOP | NVG_ALIGN_MIDDLE | NVG_ALIGN_BOTTOM | NVG_ALIGN_BASELINE);
     float      lineh    = 0;
 
-    // if (state->fontId == FONS_INVALID)
-    //     return;
-
     nvgTextMetrics(ctx, NULL, NULL, &lineh);
 
     state->textAlign = NVG_ALIGN_LEFT | valign;
@@ -3833,7 +3830,30 @@ void nvgTextBoxBounds(
 
 void nvgTextMetrics(NVGcontext* ctx, float* ascender, float* descender, float* lineh)
 {
-    NVG_ASSERT(false); // TODO
+    FT_Set_Pixel_Sizes(ctx->ft_face, 0, ctx->state.fontSize * ctx->backingScaleFactor);
+
+#if defined(NVG_FONT_FREETYPE)
+    const FT_Size_Metrics* FtSizeMetrics = &ctx->ft_face->size->metrics;
+
+    int ascent  = FtSizeMetrics->ascender >> 6;
+    int descent = FtSizeMetrics->descender >> 6;
+    int height  = FtSizeMetrics->height >> 6;
+#endif
+#if defined(NVG_FONT_STB_TRUETYPE)
+    xassert(false); // TODO
+#endif
+
+    ascent  /= ctx->backingScaleFactor;
+    descent /= ctx->backingScaleFactor;
+    height  /= ctx->backingScaleFactor;
+
+    if (ascender)
+        *ascender = ascent;
+    if (descender)
+        *descender = descent;
+    if (lineh)
+        *lineh = height;
+
     /*
     NVGstate* state    = &ctx->state;
     float     scale    = nvg__getFontScale(state) * ctx->devicePxRatio;
