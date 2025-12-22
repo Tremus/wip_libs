@@ -3227,7 +3227,7 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
     return layout;
 }
 
-SGNVGcommand* sgnvg__allocCommand(NVGcontext* ctx, enum SGNVGcommandType type, const char* label);
+static SGNVGcommand* sgnvg__allocCommand(NVGcontext* ctx, enum SGNVGcommandType type, const char* label);
 
 void snvg_command_draw_text(
     NVGcontext* ctx,
@@ -4731,7 +4731,7 @@ static void sgnvg__addCall(NVGcontext* ctx, SGNVGcall* call)
     }
 }
 
-static SGNVGcommand* sgnvg__allocCommand(NVGcontext* ctx, enum SGNVGcommandType type, const char* label)
+SGNVGcommand* sgnvg__allocCommand(NVGcontext* ctx, enum SGNVGcommandType type, const char* label)
 {
     SGNVGcommand* cmd = linked_arena_alloc_clear(ctx->frame_arena, sizeof(*cmd));
 
@@ -5690,7 +5690,7 @@ void snvg_command_custom(NVGcontext* ctx, void* uptr, SGNVGcustomFunc func, cons
 NVGcontext* nvgCreateContext(int flags)
 {
     NVGcontext*  ctx            = NULL;
-    size_t       init_arena_cap = xm_minull(1024 * 64, sizeof(*ctx));
+    size_t       init_arena_cap = xm_maxull(1024 * 64, sizeof(*ctx));
     LinkedArena* arena          = linked_arena_create_ex(0, init_arena_cap);
 
     ctx        = linked_arena_alloc(arena, sizeof(*ctx));
