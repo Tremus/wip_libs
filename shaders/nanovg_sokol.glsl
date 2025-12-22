@@ -96,6 +96,10 @@ layout(location = 0) in vec2 ftcoord;
 layout(location = 1) in vec2 fpos;
 layout(location = 0) out vec4 outColor;
 
+#define M_1_PI   0.318309886183790671538  // 1/pi
+#define M_PI     3.14159265359  // 1/pi
+
+
 float sdroundrect(vec2 pt, vec2 ext, float rad) {
     vec2 ext2 = ext - vec2(rad,rad);
     vec2 d = abs(pt) - ext2;
@@ -114,6 +118,19 @@ float strokeMask() {
     return min(1.0, (1.0-abs(ftcoord.x*2.0-1.0))*strokeMult) * min(1.0, ftcoord.y);
 }
 
+float fastsin(in float x)
+{
+    float norm = fract(x * M_1_PI);
+    norm = x > 0 ? norm : 1 - norm;
+    float y = -norm * abs(norm) + norm;
+    return 4 * y;
+}
+
+float dither_noise(in vec2 uv_coord){
+    float noise = fract(fastsin(dot(uv_coord ,vec2(12.9898,78.233))) * 43758.5453);
+    return (1.0 / 255.0) * noise - (0.5 / 255.0); // (-0.5 - 0.5) / 255 range. Shift 8bit colour +/- rgb value
+}
+
 void main(void) {
     vec4 result = vec4(0);
 
@@ -130,8 +147,11 @@ void main(void) {
         vec2 pt = (paintMat * vec3(fpos,1.0)).xy;
         float d = clamp((sdroundrect(pt, extent, radius) + feather*0.5) / feather, 0.0, 1.0);
         vec4 color = mix(innerCol,outerCol,d);
+        float noise = dither_noise(fpos);
         // Combine alpha
-        color *= strokeAlpha * scissor;
+        color *= strokeAlpha;
+        color.rgb += noise;
+        color *= scissor;
         result = color;
     } else if (type == 1) {// Image
         // Calculate color fron texture
