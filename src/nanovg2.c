@@ -3116,6 +3116,7 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
         layout->cap_rows = 8;
     layout->rows = linked_arena_alloc_clear(ctx->arena, sizeof(*layout->rows) * layout->cap_rows);
 
+    // kbts_ShapeBegin(ctx->kbts, KBTS_DIRECTION_LTR, KBTS_LANGUAGE_ENGLISH); // Doesn't seem to improve performance
     kbts_ShapeBegin(ctx->kbts, KBTS_DIRECTION_DONT_KNOW, KBTS_LANGUAGE_DONT_KNOW);
     kbts_ShapeUtf8(ctx->kbts, text_start, text_len, KBTS_USER_ID_GENERATION_MODE_CODEPOINT_INDEX);
     kbts_ShapeEnd(ctx->kbts);
@@ -3186,7 +3187,7 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
             switch (Glyph->Codepoint)
             {
             case 10: // LF, \n
-            case 32: // LF, \n
+            case 32: // SP, space
                 break;
             default:
             {
