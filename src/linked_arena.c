@@ -172,7 +172,7 @@ void linked_arena_prune(LinkedArena* arena)
     }
 }
 
-void* linked_arena_get_top(LinkedArena* arena)
+void* linked_arena_get_top(const LinkedArena* arena)
 {
     char* top = NULL;
 

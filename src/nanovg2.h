@@ -309,6 +309,7 @@ typedef struct NVGcompositeOperationState
     int dstAlpha;
 } NVGcompositeOperationState;
 
+/*
 typedef struct NVGglyphPosition
 {
     // const char* str;        // Position of the glyph in the input string.
@@ -325,6 +326,7 @@ typedef struct NVGtextRow
     float minx, maxx;  // Actual bounds of the row. Logical with and bounds can differ because of kerning and some parts
                        // over extending.
 } NVGtextRow;
+ */
 
 enum NVGimageFlags
 {
@@ -709,6 +711,45 @@ typedef struct NVGatlas
     bool    dirty;
     bool    full;
 } NVGatlas;
+
+typedef struct NVGglyphPosition2
+{
+    NVGatlasRect rect;
+    int          x, y;
+} NVGglyphPosition2;
+
+typedef struct NVGtextLayoutRow
+{
+    // Indexes into glyphs array in struct NVGtextLayout below
+    int begin_idx, end_idx;
+    int ymin, ymax;
+} NVGtextLayoutRow;
+
+// Glyphs are shaped and aligned from left > right along the baseline of row one
+// Alignment and translation on a screen should be applied at draw time
+// This design is to help reduce the amount of work kbts has do to, and avoid doing multiple runs across the text
+// Hopefully there is enough data here to make this possible.
+// Handling multiple languages is an aftertought here and this design may prove to be bad.
+typedef struct NVGtextLayout
+{
+    // to free data from this whole object, pass this to
+    // linked_arena_release(ctx->arena, layout->arena_top)
+    void* arena_top;
+
+    struct
+    {
+        int x_scale, y_scale;
+        int ascender, descender, height, vertical_centre;
+    } font_size_metrics;
+
+    // The right edge of the longest (in pixels) row
+    int xmax;
+
+    int                num_rows, cap_rows;
+    NVGtextLayoutRow*  rows;
+    int                num_glyphs, cap_glyphs;
+    NVGglyphPosition2* glyphs;
+} NVGtextLayout;
 
 typedef struct NVGcontext
 {
@@ -1313,7 +1354,7 @@ void nvgTextBox(NVGcontext* ctx, float x, float y, float breakRowWidth, const ch
 // if the bounding box of the text should be returned. The bounds value are [xmin,ymin, xmax,ymax]
 // Returns the horizontal advance of the measured text (i.e. where the next character should drawn).
 // Measured values are returned in local coordinate space.
-float nvgTextBounds(NVGcontext* ctx, float x, float y, const char* string, const char* end, float* bounds);
+// void nvgTextBounds(NVGcontext* ctx, float x, float y, const char* string, const char* end, float* bounds);
 
 // Measures the specified multi-text string. Parameter bounds should be a pointer to float[4],
 // if the bounding box of the text should be returned. The bounds value are [xmin,ymin, xmax,ymax]
@@ -1329,14 +1370,14 @@ void nvgTextBoxBounds(
 
 // Calculates the glyph x positions of the specified text. If end is specified only the sub-string will be used.
 // Measured values are returned in local coordinate space.
-int nvgTextGlyphPositions(
-    NVGcontext*       ctx,
-    float             x,
-    float             y,
-    const char*       string,
-    const char*       end,
-    NVGglyphPosition* positions,
-    int               maxPositions);
+// int nvgTextGlyphPositions(
+//     NVGcontext*       ctx,
+//     float             x,
+//     float             y,
+//     const char*       string,
+//     const char*       end,
+//     NVGglyphPosition* positions,
+//     int               maxPositions);
 
 // Returns the vertical metrics based on the current text style.
 // Measured values are returned in local coordinate space.
@@ -1345,13 +1386,21 @@ void nvgTextMetrics(NVGcontext* ctx, float* ascender, float* descender, float* l
 // Breaks the specified text into lines. If end is specified only the sub-string will be used.
 // White space is stripped at the beginning of the rows, the text is split at word boundaries or when new-line
 // characters are encountered. Words longer than the max width are slit at nearest character (i.e. no hyphenation).
-int nvgTextBreakLines(
-    NVGcontext* ctx,
-    const char* string,
-    const char* end,
-    float       breakRowWidth,
-    NVGtextRow* rows,
-    int         maxRows);
+// int nvgTextBreakLines(
+//     NVGcontext* ctx,
+//     const char* string,
+//     const char* end,
+//     float       breakRowWidth,
+//     NVGtextRow* rows,
+//     int         maxRows);
+
+const NVGtextLayout*
+     nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, float font_size, float breakRowWidth);
+void nvgDrawLayout(NVGcontext* ctx, const NVGtextLayout* layout, int x, int y);
+static void nvgReleaseLayout(NVGcontext* ctx, const NVGtextLayout* layout)
+{
+    linked_arena_release(ctx->arena, layout->arena_top);
+}
 
 sg_image sg_make_image_with_mipmaps(const sg_image_desc* desc_);
 
