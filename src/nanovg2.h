@@ -744,6 +744,7 @@ typedef struct NVGtextLayout
 
     // The right edge of the longest (in pixels) row
     int xmax;
+    int row_height;
 
     int                num_rows, cap_rows;
     NVGtextLayoutRow*  rows;

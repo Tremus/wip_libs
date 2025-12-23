@@ -301,29 +301,31 @@ enum
 {
 #if defined(NVG_FONT_FREETYPE_SINGLECHANNEL) || defined(NVG_FONT_FREETYPE_MULTICHANNEL)
 #if defined(NVG_FONT_FREETYPE_SINGLECHANNEL)
-    NVG_FT_RENDER_MODE   = FT_RENDER_MODE_NORMAL,
-    NVG_FT_PIXEL_MODE    = FT_PIXEL_MODE_GRAY,
-    NVG_FT_BITMAP_WIDTH  = 1,
-    NVG_TEXTURE_CHANNELS = 1,
-    NVG_SG_PIXEL_FORMAT  = SG_PIXELFORMAT_R8,
+    NVG_FT_RENDER_MODE       = FT_RENDER_MODE_NORMAL,
+    NVG_FT_LOAD              = FT_LOAD_RENDER | FT_LOAD_FORCE_AUTOHINT | FT_LOAD_TARGET_NORMAL,    
+    NVG_FT_PIXEL_MODE        = FT_PIXEL_MODE_GRAY,
+    NVG_FT_BITMAP_CHANNELS   = 1,
+    NVG_GLYPH_ATLAS_CHANNELS = 1,
+    NVG_SG_PIXEL_FORMAT      = SG_PIXELFORMAT_R8,
 #else
-    NVG_FT_RENDER_MODE   = FT_RENDER_MODE_LCD, // subpixel antialiasing, horizontal screen
-    NVG_FT_PIXEL_MODE    = FT_PIXEL_MODE_LCD,
-    NVG_FT_BITMAP_WIDTH  = 3,
-    NVG_TEXTURE_CHANNELS = 4,
-    NVG_SG_PIXEL_FORMAT  = SG_PIXELFORMAT_RGBA8,
+    NVG_FT_RENDER_MODE       = FT_RENDER_MODE_LCD, // subpixel antialiasing, horizontal screen
+    NVG_FT_LOAD              = FT_LOAD_RENDER | FT_LOAD_FORCE_AUTOHINT | FT_LOAD_TARGET_LCD,
+    NVG_FT_PIXEL_MODE        = FT_PIXEL_MODE_LCD,
+    NVG_FT_BITMAP_CHANNELS   = 3,
+    NVG_GLYPH_ATLAS_CHANNELS = 4,
+    NVG_SG_PIXEL_FORMAT      = SG_PIXELFORMAT_RGBA8,
 #endif
 #endif // NVG_FONT_FREETYPE_SINGLECHANNEL || NVG_FONT_FREETYPE_MULTICHANNEL
 
 #ifdef NVG_FONT_STB_TRUETYPE
-    NVG_TEXTURE_CHANNELS = 1,
-    NVG_SG_PIXEL_FORMAT  = SG_PIXELFORMAT_R8,
+    NVG_GLYPH_ATLAS_CHANNELS = 1,
+    NVG_SG_PIXEL_FORMAT      = SG_PIXELFORMAT_R8,
 #endif
 
     NVG_ATLAS_SIZE_SHIFT   = 8,
     NVG_ATLAS_WIDTH        = (1 << NVG_ATLAS_SIZE_SHIFT),
     NVG_ATLAS_HEIGHT       = NVG_ATLAS_WIDTH,
-    NVG_ATLAS_ROW_STRIDE   = NVG_ATLAS_WIDTH * NVG_TEXTURE_CHANNELS,
+    NVG_ATLAS_ROW_STRIDE   = NVG_ATLAS_WIDTH * NVG_GLYPH_ATLAS_CHANNELS,
     NVG_ATLAS_UINT16_SHIFT = (16 - NVG_ATLAS_SIZE_SHIFT),
 
     RECTPACK_PADDING = 1,
@@ -2783,22 +2785,17 @@ int nvg__renderGlyph(NVGcontext* ctx, uint32_t glyph_index, float font_size)
     xassert(ctx->current_atlas.idx < xarr_len(ctx->glyph_atlases));
     NVGatlas* atlas = ctx->glyph_atlases + ctx->current_atlas.idx;
 
-    int err = FT_Load_Glyph(ctx->ft_face, glyph_index, FT_LOAD_DEFAULT);
+    int err = FT_Load_Glyph(ctx->ft_face, glyph_index, NVG_FT_LOAD);
     xassert(!err);
 
-    FT_GlyphSlot glyph = ctx->ft_face->glyph;
-
-    FT_Render_Mode render_mode = NVG_FT_RENDER_MODE;
-    FT_Render_Glyph(glyph, render_mode);
-
-    const FT_Bitmap* bmp = &glyph->bitmap;
+    const FT_GlyphSlot glyph = ctx->ft_face->glyph;
+    const FT_Bitmap*   bmp   = &glyph->bitmap;
     xassert(bmp->pixel_mode == NVG_FT_PIXEL_MODE);
-    xassert((bmp->width % NVG_FT_BITMAP_WIDTH) == 0); // note: FT width is measured in bytes (subpixels)
-
+    xassert((bmp->width % NVG_FT_BITMAP_CHANNELS) == 0); // note: FT width is measured in bytes (subpixels)
     // Note all glyphs have height/rows... (spaces?)
     if (bmp->width && bmp->rows)
     {
-        int        width_pixels = bmp->width / NVG_FT_BITMAP_WIDTH;
+        int        width_pixels = bmp->width / NVG_FT_BITMAP_CHANNELS;
         stbrp_rect rect         = {.w = width_pixels + RECTPACK_PADDING, .h = bmp->rows + RECTPACK_PADDING};
         num_packed              = stbrp_pack_rects(&ctx->current_atlas.ctx, &rect, 1);
 
@@ -2841,13 +2838,13 @@ int nvg__renderGlyph(NVGcontext* ctx, uint32_t glyph_index, float font_size)
             NVGatlasRect arect;
             arect.header.glyphid   = glyph_index;
             arect.header.font_size = font_size;
-            arect.bearing_x        = (glyph->metrics.horiBearingX >> 6) / ctx->backingScaleFactor;
-            arect.bearing_y        = (glyph->metrics.horiBearingY >> 6) / ctx->backingScaleFactor;
-            arect.x                = rect.x + RECTPACK_PADDING;
-            arect.y                = rect.y + RECTPACK_PADDING;
-            arect.w                = width_pixels;
-            arect.h                = bmp->rows;
-            arect.img_view         = atlas->img_view;
+            arect.bearing_x = glyph->bitmap_left;
+            arect.bearing_y = glyph->bitmap_top;
+            arect.x         = rect.x + RECTPACK_PADDING;
+            arect.y         = rect.y + RECTPACK_PADDING;
+            arect.w         = width_pixels;
+            arect.h         = bmp->rows;
+            arect.img_view  = atlas->img_view;
             xassert(arect.x + arect.w < NVG_ATLAS_WIDTH);
             xassert(arect.y + arect.h < NVG_ATLAS_HEIGHT);
 
@@ -2869,10 +2866,10 @@ int nvg__renderGlyph(NVGcontext* ctx, uint32_t glyph_index, float font_size)
                 dst_view += 0;
 #else
                 unsigned char* dst =
-                    ctx->current_atlas.img_data + (arect.y + y) * NVG_ATLAS_ROW_STRIDE + arect.x * NVG_TEXTURE_CHANNELS;
+                    ctx->current_atlas.img_data + (arect.y + y) * NVG_ATLAS_ROW_STRIDE + arect.x * NVG_GLYPH_ATLAS_CHANNELS;
                 unsigned char* src = bmp->buffer + y * bmp->pitch;
 
-                for (int x = 0; x < width_pixels; x++, dst += NVG_TEXTURE_CHANNELS, src += NVG_FT_BITMAP_WIDTH)
+                for (int x = 0; x < width_pixels; x++, dst += NVG_GLYPH_ATLAS_CHANNELS, src += NVG_FT_BITMAP_CHANNELS)
                 {
                     dst[0] = src[0];
                     dst[1] = src[1];
@@ -2966,7 +2963,7 @@ int nvg__renderGlyph(TextLayer* ctx, uint32_t glyph_index, float font_size)
             xassert(arect.y + arect.h <= NVG_ATLAS_HEIGHT);
 
             unsigned char* dst =
-                ctx->current_atlas.img_data + rect.y * NVG_ATLAS_ROW_STRIDE + rect.x * NVG_TEXTURE_CHANNELS;
+                ctx->current_atlas.img_data + rect.y * NVG_ATLAS_ROW_STRIDE + rect.x * NVG_GLYPH_ATLAS_CHANNELS;
 
             stbtt_MakeGlyphBitmap(&ctx->fontinfo, dst, iw, ih, NVG_ATLAS_ROW_STRIDE, scale, scale, glyph_index);
 
@@ -3045,10 +3042,10 @@ bool nvg__pushGlyph(NVGcontext* ctx, int pen_x, int pen_y, const NVGatlasRect* r
         xassert(tex_r < (1 << 16));
         xassert(tex_b < (1 << 16));
 
-        int glyph_left   = pen_x + (int)rect->bearing_x;
-        int glyph_top    = pen_y - (int)rect->bearing_y;
-        int glyph_right  = glyph_left + (int)rect->w / ctx->backingScaleFactor;
-        int glyph_bottom = glyph_top + (int)rect->h / ctx->backingScaleFactor;
+        float glyph_left   = ctx->backingScaleFactor * pen_x + (float)rect->bearing_x;
+        float glyph_top    = ctx->backingScaleFactor * pen_y - (float)rect->bearing_y;
+        float glyph_right  = glyph_left + (float)rect->w;
+        float glyph_bottom = glyph_top + (float)rect->h;
 
         xassert(glyph_left < (1 << 16));
         xassert(glyph_top < (1 << 16));
@@ -3108,8 +3105,6 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
         text_end = text_start + strlen(text_start);
     const size_t text_len = text_end - text_start;
 
-    FT_Set_Pixel_Sizes(ctx->ft_face, 0, ctx->state.fontSize * ctx->backingScaleFactor);
-
     void* arena_bottom = linked_arena_get_top(ctx->arena);
 
     NVGtextLayout* layout = linked_arena_alloc_clear(ctx->arena, sizeof(*layout));
@@ -3126,15 +3121,19 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
     kbts_ShapeEnd(ctx->kbts);
 
 #if defined(NVG_FONT_FREETYPE)
+    FT_Set_Pixel_Sizes(ctx->ft_face, 0, ctx->state.fontSize * ctx->backingScaleFactor);
+
     const FT_Size_Metrics* m = &ctx->ft_face->size->metrics;
 
-    layout->font_size_metrics.x_scale = m->x_scale / ctx->backingScaleFactor;
-    layout->font_size_metrics.y_scale = m->y_scale / ctx->backingScaleFactor;
+    layout->font_size_metrics.x_scale = m->x_scale;
+    layout->font_size_metrics.y_scale = m->y_scale;
 
     layout->font_size_metrics.ascender        = m->ascender >> 6;
     layout->font_size_metrics.descender       = m->descender >> 6;
     layout->font_size_metrics.height          = m->height >> 6;
     layout->font_size_metrics.vertical_centre = (m->ascender - (m->height >> 1)) >> 6;
+    layout->row_height                        = (uint64_t)((double)m->height * ctx->state.lineHeight) >> 6;
+    uint64_t line_height                      = (double)m->height * ctx->state.lineHeight;
 #endif
 #if defined(NVG_FONT_STB_TRUETYPE)
     // TODO: stbtt
@@ -3150,6 +3149,15 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
     int y_scale = 32768;
 #endif
 
+    layout->font_size_metrics.x_scale         /= ctx->backingScaleFactor;
+    layout->font_size_metrics.y_scale         /= ctx->backingScaleFactor;
+    layout->font_size_metrics.ascender        /= ctx->backingScaleFactor;
+    layout->font_size_metrics.descender       /= ctx->backingScaleFactor;
+    layout->font_size_metrics.height          /= ctx->backingScaleFactor;
+    layout->font_size_metrics.vertical_centre /= ctx->backingScaleFactor;
+    layout->row_height                        /= ctx->backingScaleFactor;
+    line_height                               /= ctx->backingScaleFactor;
+
     kbts_run Run;
     int64_t  CursorX = 0, CursorY = 0;
     int      line_xmax = 0, line_ymax = 0, line_ymin = 0;
@@ -3163,7 +3171,7 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
             if (layout->xmax < text_px_right)
                 layout->xmax = text_px_right;
 
-            CursorY += (m->height << 16) / layout->font_size_metrics.y_scale;
+            CursorY += line_height;
             CursorX  = 0;
 
             nvg_endRow(ctx, layout, line_ymin, line_ymax);
@@ -3178,6 +3186,7 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
             switch (Glyph->Codepoint)
             {
             case 10: // LF, \n
+            case 32: // LF, \n
                 break;
             default:
             {
@@ -3370,65 +3379,6 @@ void nvgTextBox(NVGcontext* ctx, float x, float y, float breakRowWidth, const ch
 
     LINKED_ARENA_LEAK_DETECT_END(ctx->arena);
 }
-
-// int nvgTextGlyphPositions(
-//     NVGcontext*       ctx,
-//     float             x,
-//     float             y,
-//     const char*       text_start,
-//     const char*       text_end,
-//     NVGglyphPosition* positions,
-//     int               maxPositions)
-// {
-//     int num_positions = 0;
-
-//     if (text_end == NULL)
-//         text_end = text_start + strlen(text_start);
-//     const size_t text_len = text_end - text_start;
-
-//     FT_Set_Pixel_Sizes(ctx->ft_face, 0, ctx->state.fontSize * ctx->backingScaleFactor);
-
-// #if defined(NVG_FONT_FREETYPE)
-//     const FT_Size_Metrics* FtSizeMetrics  = &ctx->ft_face->size->metrics;
-//     int                    x_scale        = FtSizeMetrics->x_scale;
-//     int                    y_scale        = FtSizeMetrics->y_scale;
-//     x_scale                              /= ctx->backingScaleFactor;
-//     y_scale                              /= ctx->backingScaleFactor;
-// #endif
-// #if defined(NVG_FONT_STB_TRUETYPE)
-//     xassert(false); // TODO
-// #endif
-
-//     kbts_ShapeBegin(ctx->kbts, KBTS_DIRECTION_DONT_KNOW, KBTS_LANGUAGE_DONT_KNOW);
-//     kbts_ShapeUtf8(ctx->kbts, text_start, text_end - text_start, KBTS_USER_ID_GENERATION_MODE_CODEPOINT_INDEX);
-//     kbts_ShapeEnd(ctx->kbts);
-
-//     kbts_run Run;
-//     int      CursorX = 0;
-//     while (kbts_ShapeRun(ctx->kbts, &Run))
-//     {
-//         kbts_glyph* Glyph;
-//         while (kbts_GlyphIteratorNext(&Run.Glyphs, &Glyph))
-//         {
-//             int err = FT_Load_Glyph(ctx->ft_face, Glyph->Id, FT_LOAD_DEFAULT);
-//             xassert(!err);
-
-//             FT_GlyphSlot glyph = ctx->ft_face->glyph;
-
-//             int GlyphX = CursorX + Glyph->OffsetX;
-
-//             int minx = (GlyphX * x_scale) >> 22;
-//             int maxx = ((GlyphX + Glyph->AdvanceX) * x_scale) >> 22;
-
-//             if (num_positions < maxPositions)
-//                 positions[num_positions++] = (NVGglyphPosition){minx, maxx};
-
-//             CursorX += Glyph->AdvanceX;
-//         }
-//     }
-
-//     return num_positions;
-// }
 
 enum NVGcodepointType
 {
@@ -4533,8 +4483,8 @@ int snvg_consume_commands(NVGcontext* ctx, SGNVGcommand* cmd)
             sg_apply_bindings(&bind);
 
             vs_text_uniforms_t vs_text_uniforms = {
-                .u_xy_offset  = {ctx->view.viewSize[0], ctx->view.viewSize[1]},
-                .u_view_size  = {ctx->view.viewSize[2], ctx->view.viewSize[3]},
+                .u_xy_offset  = {ctx->view.viewSize[0] * ctx->backingScaleFactor, ctx->view.viewSize[1] * ctx->backingScaleFactor},
+                .u_view_size  = {ctx->view.viewSize[2] * ctx->backingScaleFactor, ctx->view.viewSize[3] * ctx->backingScaleFactor},
                 .u_sbo_offset = cmdText->text_buffer_start,
             };
             sg_apply_uniforms(UB_vs_text_uniforms, &SG_RANGE(vs_text_uniforms));
