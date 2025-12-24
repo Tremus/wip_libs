@@ -3042,8 +3042,8 @@ bool nvg__pushGlyph(NVGcontext* ctx, int pen_x, int pen_y, const NVGatlasRect* r
         xassert(tex_r < (1 << 16));
         xassert(tex_b < (1 << 16));
 
-        float glyph_left   = ctx->backingScaleFactor * pen_x + (float)rect->bearing_x;
-        float glyph_top    = ctx->backingScaleFactor * pen_y - (float)rect->bearing_y;
+        float glyph_left   = pen_x + (float)rect->bearing_x;
+        float glyph_top    = pen_y - (float)rect->bearing_y;
         float glyph_right  = glyph_left + (float)rect->w;
         float glyph_bottom = glyph_top + (float)rect->h;
 
@@ -3067,25 +3067,30 @@ bool nvg__pushGlyph(NVGcontext* ctx, int pen_x, int pen_y, const NVGatlasRect* r
     return should_push;
 }
 
-void nvg_startRow(NVGcontext* ctx, NVGtextLayout* layout)
+NVGtextLayoutRow* nvg_startRow(NVGcontext* ctx, NVGtextLayout* layout)
 {
     NVG_ASSERT(layout->num_glyphs <= layout->cap_glyphs);
+    NVGtextLayoutRow* rows  = nvgLayoutGetRows(layout);
     if (layout->num_glyphs >= layout->cap_glyphs)
     {
         // realloc
         layout->cap_glyphs          *= 2;
         NVGtextLayoutRow* next_rows  = linked_arena_alloc(ctx->arena, sizeof(*next_rows) * layout->cap_rows);
-        memcpy(next_rows, layout->rows, sizeof(*next_rows) * layout->num_rows);
+        memcpy(next_rows, rows, sizeof(*next_rows) * layout->num_rows);
+
+        nvgLayoutSetRows(layout, next_rows);
+        rows = next_rows;
     }
 
-    layout->rows[layout->num_rows++] = (NVGtextLayoutRow){.begin_idx = layout->num_glyphs};
+    rows[layout->num_rows++] = (NVGtextLayoutRow){.begin_idx = layout->num_glyphs};
+    return rows;
 }
 void nvg_endRow(NVGcontext* ctx, NVGtextLayout* layout, int ymin, int ymax)
 {
     // NVG_ASSERT(layout->num_rows > 0);
     if (layout->num_rows > 0)
     {
-        NVGtextLayoutRow* row = &layout->rows[layout->num_rows - 1];
+        NVGtextLayoutRow* row = &nvgLayoutGetRows(layout)[layout->num_rows - 1];
 
         if (row->begin_idx != layout->num_glyphs)
         {
@@ -3105,16 +3110,16 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
         text_end = text_start + strlen(text_start);
     const size_t text_len = text_end - text_start;
 
-    void* arena_bottom = linked_arena_get_top(ctx->arena);
-
     NVGtextLayout* layout = linked_arena_alloc_clear(ctx->arena, sizeof(*layout));
-    layout->arena_top     = arena_bottom;
     layout->cap_glyphs    = text_len * 2;
-    layout->glyphs        = linked_arena_alloc(ctx->arena, sizeof(*layout->glyphs) * layout->cap_glyphs);
+    
     layout->cap_rows      = text_len >> 4;
-    if (layout->cap_rows < 8)
+        if (layout->cap_rows < 8)
         layout->cap_rows = 8;
-    layout->rows = linked_arena_alloc_clear(ctx->arena, sizeof(*layout->rows) * layout->cap_rows);
+    NVGglyphPosition2* glyphs = linked_arena_alloc(ctx->arena, sizeof(*glyphs) * layout->cap_glyphs);
+    NVGtextLayoutRow*  rows   = linked_arena_alloc_clear(ctx->arena, sizeof(*rows) * layout->cap_rows);
+    nvgLayoutSetGlyphs(layout, glyphs);
+    nvgLayoutSetRows(layout, rows);
 
     // kbts_ShapeBegin(ctx->kbts, KBTS_DIRECTION_LTR, KBTS_LANGUAGE_ENGLISH); // Doesn't seem to improve performance
     kbts_ShapeBegin(ctx->kbts, KBTS_DIRECTION_DONT_KNOW, KBTS_LANGUAGE_DONT_KNOW);
@@ -3128,17 +3133,16 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
     const FT_Size_Metrics* m = &face->size->metrics;
 
     int64_t line_height = (double)m->height * ctx->state.lineHeight;
-    int64_t line_height_diff = line_height - m->height;
-    int64_t line_height_offset = line_height_diff - (line_height_diff / 2); // round up
+    // int64_t line_height_diff = line_height - m->height;
+    // int64_t line_height_offset = line_height_diff - (line_height_diff / 2); // round up
 
     int64_t x_scale = m->x_scale;
     int64_t y_scale = m->y_scale;
 
-    layout->font_size_metrics.ascender        = m->ascender >> 6;
-    layout->font_size_metrics.descender       = m->descender >> 6;
-    layout->font_size_metrics.height          = m->height >> 6;
-    layout->font_size_metrics.vertical_centre = (m->ascender - (m->height >> 1) + line_height_offset) >> 6;
-    layout->line_height                       = line_height >> 6;
+    layout->ascender  = m->ascender >> 6;
+    layout->descender = m->descender >> 6;
+    // layout->height          = m->height >> 6;
+    layout->line_height             = line_height >> 6;
 #endif
 #if defined(NVG_FONT_STB_TRUETYPE)
     // TODO: stbtt
@@ -3154,22 +3158,13 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
     int y_scale = 32768;
 #endif
 
-    x_scale /= ctx->backingScaleFactor;
-    y_scale /= ctx->backingScaleFactor;
-
-    layout->font_size_metrics.ascender        /= ctx->backingScaleFactor;
-    layout->font_size_metrics.descender       /= ctx->backingScaleFactor;
-    layout->font_size_metrics.height          /= ctx->backingScaleFactor;
-    layout->font_size_metrics.vertical_centre /= ctx->backingScaleFactor;
-    layout->line_height                       /= ctx->backingScaleFactor;
-
     kbts_run Run;
     int64_t  CursorX = 0, CursorY = 0;
     int      line_xmax = 0, layout_xmax = 0;
     int      line_ymax = 0, line_ymin = 0;
 
     unsigned break_counter = 0;
-    nvg_startRow(ctx, layout);
+    rows = nvg_startRow(ctx, layout);
     while (kbts_ShapeRun(ctx->kbts, &Run))
     {
         if (Run.Flags & KBTS_BREAK_FLAG_LINE)
@@ -3187,7 +3182,7 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
             line_xmax = 0;
             line_ymin = 0;
             line_ymax = 0;
-            nvg_startRow(ctx, layout);
+            rows = nvg_startRow(ctx, layout);
         }
         kbts_glyph* Glyph;
         while (kbts_GlyphIteratorNext(&Run.Glyphs, &Glyph))
@@ -3223,7 +3218,7 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
 
                 if (add_to_metadata)
                 {
-                    layout->glyphs[layout->num_glyphs++] =
+                    glyphs[layout->num_glyphs++] =
                         (NVGglyphPosition2){.x = glyph_px_x, .y = glyph_px_y, .rect = *rect};
                 }
                 break;
@@ -3241,7 +3236,7 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
     nvg_endRow(ctx, layout, line_ymin, line_ymax);
     NVG_ASSERT(layout->num_rows);
     NVG_ASSERT(layout->num_glyphs);
-    NVG_ASSERT(layout->rows[0].begin_idx < layout->rows[0].end_idx);
+    NVG_ASSERT(rows[0].begin_idx < rows[0].end_idx);
 
     return layout;
 }
@@ -3270,7 +3265,8 @@ void snvg_command_draw_text(
 
 void nvgDrawLayout(NVGcontext* ctx, const NVGtextLayout* layout, int x, int y)
 {
-    NVG_ASSERT(layout->rows[0].begin_idx < layout->rows[0].end_idx);
+    x *= ctx->backingScaleFactor;
+    y *= ctx->backingScaleFactor;
 
     int text_px_right = layout->xmax;
 
@@ -3289,20 +3285,22 @@ void nvgDrawLayout(NVGcontext* ctx, const NVGtextLayout* layout, int x, int y)
         // y += text_ymax;
         // y -= (text_ymax - text_ymin) / 2;
         // y -= ascent / 2;
-        // y += layout->font_size_metrics.ascender;
-        // y -= layout->font_size_metrics.height / 2;
-        y += layout->font_size_metrics.vertical_centre;
+        // y += layout->ascender;
+        // y -= layout->height / 2;
+        y += layout->ascender;
+        y -= nvgLayoutGetHeight(ctx, layout) / 2;
+        // y -= ((layout->num_rows-1) * layout->line_height) / 2;
     }
     else if (alignment & NVG_ALIGN_TOP)
     {
         // y += layout->rows[0].ymax;
-        y += layout->font_size_metrics.ascender;
+        y += layout->ascender;
     }
     else if (alignment & NVG_ALIGN_BOTTOM)
     {
         // y += layout->rows[layout->num_rows - 1].ymin;
-        // y += (layout->num_rows - 1) * layout->font_size_metrics.height;
-        y += layout->font_size_metrics.descender;
+        // y += (layout->num_rows - 1) * layout->font_size_height;
+        y += layout->descender;
     }
     // NVGglyphPosition2(*view_glyphs)[512] = (void*)layout->glyphs;
     // NVG_ASSERT(layout->num_rows == 1);
@@ -3312,7 +3310,7 @@ void nvgDrawLayout(NVGcontext* ctx, const NVGtextLayout* layout, int x, int y)
     // We may perform multiple passes over the glyph_pos buffer as we put all glyphs sharing a buffer into a batch
     // at a time, and build a
     size_t             glyph_pos_len = layout->num_glyphs;
-    NVGglyphPosition2* glyph_pos_1   = layout->glyphs;
+    NVGglyphPosition2* glyph_pos_1   = nvgLayoutGetGlyphs(layout);
     NVGglyphPosition2* glyph_pos_2   = linked_arena_alloc(ctx->arena, sizeof(*glyph_pos_2) * glyph_pos_len);
 
     int                glyphs_consumed      = 0;
@@ -3648,62 +3646,12 @@ void nvgTextBoxBounds(
 
     bounds[0] = x;
     bounds[1] = y;
-    bounds[2] = x + layout->xmax;
-    bounds[3] = y + layout->num_rows + layout->font_size_metrics.height;
+    bounds[2] = x + layout->xmax / ctx->backingScaleFactor;
+    bounds[3] = y + layout->num_rows * layout->line_height / ctx->backingScaleFactor;
 
     nvgReleaseLayout(ctx, layout);
 
     LINKED_ARENA_LEAK_DETECT_END(ctx->arena);
-}
-
-void nvgTextMetrics(NVGcontext* ctx, float* ascender, float* descender, float* lineh)
-{
-    FT_Set_Pixel_Sizes(ctx->ft_face, 0, ctx->state.fontSize * ctx->backingScaleFactor);
-
-#if defined(NVG_FONT_FREETYPE)
-    const FT_Size_Metrics* FtSizeMetrics = &ctx->ft_face->size->metrics;
-
-    int ascent  = FtSizeMetrics->ascender >> 6;
-    int descent = FtSizeMetrics->descender >> 6;
-    int height  = FtSizeMetrics->height >> 6;
-#endif
-#if defined(NVG_FONT_STB_TRUETYPE)
-    xassert(false); // TODO
-#endif
-
-    ascent  /= ctx->backingScaleFactor;
-    descent /= ctx->backingScaleFactor;
-    height  /= ctx->backingScaleFactor;
-
-    if (ascender)
-        *ascender = ascent;
-    if (descender)
-        *descender = descent;
-    if (lineh)
-        *lineh = height;
-
-    /*
-    NVGstate* state    = &ctx->state;
-    float     scale    = nvg__getFontScale(state) * ctx->devicePxRatio;
-    float     invscale = 1.0f / scale;
-
-    if (state->fontId == FONS_INVALID)
-        return;
-
-    fonsSetSize(ctx->fs, state->fontSize * scale);
-    fonsSetSpacing(ctx->fs, state->letterSpacing * scale);
-    fonsSetBlur(ctx->fs, state->fontBlur * scale);
-    fonsSetAlign(ctx->fs, state->textAlign);
-    fonsSetFont(ctx->fs, state->fontId);
-
-    fonsVertMetrics(ctx->fs, ascender, descender, lineh);
-    if (ascender != NULL)
-        *ascender *= invscale;
-    if (descender != NULL)
-        *descender *= invscale;
-    if (lineh != NULL)
-        *lineh *= invscale;
-    */
 }
 
 #ifdef SOKOL_GLES2

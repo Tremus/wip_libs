@@ -712,45 +712,6 @@ typedef struct NVGatlas
     bool    full;
 } NVGatlas;
 
-typedef struct NVGglyphPosition2
-{
-    NVGatlasRect rect;
-    int          x, y;
-} NVGglyphPosition2;
-
-typedef struct NVGtextLayoutRow
-{
-    // Indexes into glyphs array in struct NVGtextLayout below
-    int begin_idx, end_idx;
-    int ymin, ymax;
-} NVGtextLayoutRow;
-
-// Glyphs are shaped and aligned from left > right along the baseline of row one
-// Alignment and translation on a screen should be applied at draw time
-// This design is to help reduce the amount of work kbts has do to, and avoid doing multiple runs across the text
-// Hopefully there is enough data here to make this possible.
-// Handling multiple languages is an aftertought here and this design may prove to be bad.
-typedef struct NVGtextLayout
-{
-    // to free data from this whole object, pass this to
-    // linked_arena_release(ctx->arena, layout->arena_top)
-    void* arena_top;
-
-    struct
-    {
-        int ascender, descender, height, vertical_centre;
-    } font_size_metrics;
-
-    // The right edge of the longest (in pixels) row
-    int xmax;
-    int line_height;
-
-    int                num_rows, cap_rows;
-    NVGtextLayoutRow*  rows;
-    int                num_glyphs, cap_glyphs;
-    NVGglyphPosition2* glyphs;
-} NVGtextLayout;
-
 typedef struct NVGcontext
 {
     LinkedArena* arena;
@@ -877,6 +838,67 @@ typedef struct NVGcontext
     int     dummyTex;
     sg_view dummyTexView;
 } NVGcontext;
+
+
+typedef struct NVGglyphPosition2
+{
+    NVGatlasRect rect;
+    int          x, y;
+} NVGglyphPosition2;
+
+typedef struct NVGtextLayoutRow
+{
+    // Indexes into glyphs array in struct NVGtextLayout below
+    int begin_idx, end_idx;
+    int ymin, ymax;
+} NVGtextLayoutRow;
+
+// Glyphs are shaped and aligned from left > right along the baseline of row one
+// Alignment and translation on a screen should be applied at draw time
+// This design is to help reduce the amount of work kbts has do to, and avoid doing multiple runs across the text
+// Hopefully there is enough data here to make this possible.
+// Handling multiple languages is an aftertought here and this design may prove to be bad.
+typedef struct NVGtextLayout
+{
+    // WARNING: this values are scaled accorting to ctx->backingScaleFactor
+    // You are free to use them, however you may need to remember to divide by backingScaleFactor to your work in your
+    // own pixel space
+    int ascender, descender;
+    int line_height;
+    int xmax; // The right edge of the longest (in pixels) row
+
+    int num_rows, cap_rows;
+    int num_glyphs, cap_glyphs;
+    int offset_rows;
+    int offset_glyphs;
+} NVGtextLayout;
+
+static NVGtextLayoutRow* nvgLayoutGetRows(const NVGtextLayout* l)
+{
+    return (NVGtextLayoutRow*)((char*)l + l->offset_rows);
+}
+static void nvgLayoutSetRows(NVGtextLayout* l, NVGtextLayoutRow* r)
+{
+    l->offset_rows = ((char*)r - (char*)l);
+}
+static NVGglyphPosition2* nvgLayoutGetGlyphs(const NVGtextLayout* l)
+{
+    return (NVGglyphPosition2*)((char*)l + l->offset_glyphs);
+}
+static void nvgLayoutSetGlyphs(NVGtextLayout* l, NVGglyphPosition2* g)
+{
+    l->offset_glyphs = ((char*)g - (char*)l);
+}
+
+static int nvgLayoutGetHeight(const NVGcontext* ctx, const NVGtextLayout* l)
+{
+    int range = l->ascender - l->descender;
+    int gap = l->line_height - range;
+
+    int total_height = l->num_rows * range + (l->num_rows-1) * gap;
+    return total_height;
+}
+
 
 NVGcontext* nvgCreateContext(int flags);
 void        nvgDestroyContext(NVGcontext* ctx);
@@ -1381,7 +1403,7 @@ void nvgTextBoxBounds(
 
 // Returns the vertical metrics based on the current text style.
 // Measured values are returned in local coordinate space.
-void nvgTextMetrics(NVGcontext* ctx, float* ascender, float* descender, float* lineh);
+// NVGtextMetrics nvgTextMetrics(NVGcontext* ctx);
 
 // Breaks the specified text into lines. If end is specified only the sub-string will be used.
 // White space is stripped at the beginning of the rows, the text is split at word boundaries or when new-line
@@ -1399,7 +1421,7 @@ const NVGtextLayout*
 void nvgDrawLayout(NVGcontext* ctx, const NVGtextLayout* layout, int x, int y);
 static void nvgReleaseLayout(NVGcontext* ctx, const NVGtextLayout* layout)
 {
-    linked_arena_release(ctx->arena, layout->arena_top);
+    linked_arena_release(ctx->arena, layout);
 }
 
 sg_image sg_make_image_with_mipmaps(const sg_image_desc* desc_);
