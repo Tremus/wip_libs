@@ -3122,19 +3122,23 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
     kbts_ShapeEnd(ctx->kbts);
 
 #if defined(NVG_FONT_FREETYPE)
-    FT_Set_Pixel_Sizes(ctx->ft_face, 0, ctx->state.fontSize * ctx->backingScaleFactor);
+    FT_FaceRec* face = ctx->ft_face;
+    FT_Set_Pixel_Sizes(face, 0, ctx->state.fontSize * ctx->backingScaleFactor);
 
-    const FT_Size_Metrics* m = &ctx->ft_face->size->metrics;
+    const FT_Size_Metrics* m = &face->size->metrics;
 
-    layout->font_size_metrics.x_scale = m->x_scale;
-    layout->font_size_metrics.y_scale = m->y_scale;
+    int64_t line_height = (double)m->height * ctx->state.lineHeight;
+    int64_t line_height_diff = line_height - m->height;
+    int64_t line_height_offset = line_height_diff - (line_height_diff / 2); // round up
+
+    int64_t x_scale = m->x_scale;
+    int64_t y_scale = m->y_scale;
 
     layout->font_size_metrics.ascender        = m->ascender >> 6;
     layout->font_size_metrics.descender       = m->descender >> 6;
     layout->font_size_metrics.height          = m->height >> 6;
-    layout->font_size_metrics.vertical_centre = (m->ascender - (m->height >> 1)) >> 6;
-    layout->row_height                        = (uint64_t)((double)m->height * ctx->state.lineHeight) >> 6;
-    uint64_t line_height                      = (double)m->height * ctx->state.lineHeight;
+    layout->font_size_metrics.vertical_centre = (m->ascender - (m->height >> 1) + line_height_offset) >> 6;
+    layout->line_height                       = line_height >> 6;
 #endif
 #if defined(NVG_FONT_STB_TRUETYPE)
     // TODO: stbtt
@@ -3150,27 +3154,31 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
     int y_scale = 32768;
 #endif
 
-    layout->font_size_metrics.x_scale         /= ctx->backingScaleFactor;
-    layout->font_size_metrics.y_scale         /= ctx->backingScaleFactor;
+    x_scale /= ctx->backingScaleFactor;
+    y_scale /= ctx->backingScaleFactor;
+
     layout->font_size_metrics.ascender        /= ctx->backingScaleFactor;
     layout->font_size_metrics.descender       /= ctx->backingScaleFactor;
     layout->font_size_metrics.height          /= ctx->backingScaleFactor;
     layout->font_size_metrics.vertical_centre /= ctx->backingScaleFactor;
-    layout->row_height                        /= ctx->backingScaleFactor;
-    line_height                               /= ctx->backingScaleFactor;
+    layout->line_height                       /= ctx->backingScaleFactor;
 
     kbts_run Run;
     int64_t  CursorX = 0, CursorY = 0;
-    int      line_xmax = 0, line_ymax = 0, line_ymin = 0;
+    int      line_xmax = 0, layout_xmax = 0;
+    int      line_ymax = 0, line_ymin = 0;
 
+    unsigned break_counter = 0;
     nvg_startRow(ctx, layout);
     while (kbts_ShapeRun(ctx->kbts, &Run))
     {
         if (Run.Flags & KBTS_BREAK_FLAG_LINE)
         {
-            int text_px_right = (CursorX * layout->font_size_metrics.x_scale) >> 22;
-            if (layout->xmax < text_px_right)
-                layout->xmax = text_px_right;
+            int text_px_right = (CursorX * x_scale) >> 22;
+            if (text_px_right > layout_xmax)
+                layout_xmax = text_px_right;
+
+            break_counter++;
 
             CursorY += line_height;
             CursorX  = 0;
@@ -3194,8 +3202,8 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
                 int64_t GlyphX = CursorX + Glyph->OffsetX;
                 int64_t GlyphY = CursorY + Glyph->OffsetY;
 
-                int glyph_px_x = (GlyphX * layout->font_size_metrics.x_scale) >> 22;
-                int glyph_px_y = (GlyphY * layout->font_size_metrics.y_scale) >> 22;
+                int glyph_px_x = (GlyphX * x_scale) >> 22;
+                int glyph_px_y = (GlyphY * y_scale) >> 22;
 
                 xassert(glyph_px_x >= 0);
                 xassert(glyph_px_y >= 0);
@@ -3226,9 +3234,10 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
             CursorY += Glyph->AdvanceY;
         }
     }
-    int text_px_right = (CursorX * layout->font_size_metrics.x_scale) >> 22;
-    if (layout->xmax < text_px_right)
-        layout->xmax = text_px_right;
+    int text_px_right = (CursorX * x_scale) >> 22;
+    if (text_px_right > layout_xmax)
+        layout_xmax = text_px_right;
+    layout->xmax = layout_xmax;
     nvg_endRow(ctx, layout, line_ymin, line_ymax);
     NVG_ASSERT(layout->num_rows);
     NVG_ASSERT(layout->num_glyphs);

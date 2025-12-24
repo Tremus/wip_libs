@@ -738,13 +738,12 @@ typedef struct NVGtextLayout
 
     struct
     {
-        int x_scale, y_scale;
         int ascender, descender, height, vertical_centre;
     } font_size_metrics;
 
     // The right edge of the longest (in pixels) row
     int xmax;
-    int row_height;
+    int line_height;
 
     int                num_rows, cap_rows;
     NVGtextLayoutRow*  rows;
