@@ -3117,7 +3117,7 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
 
     NVGtextLayout* layout = linked_arena_alloc_clear(ctx->arena, sizeof(*layout));
     layout->cap_glyphs    = text_len * 2;
-    
+
     layout->cap_rows      = text_len >> 4;
         if (layout->cap_rows < 8)
         layout->cap_rows = 8;
@@ -3179,8 +3179,8 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
 
             break_counter++;
 
-            CursorY += line_height;
             CursorX  = 0;
+            CursorY += line_height;
 
             nvg_endRow(ctx, layout, line_ymin, line_ymax);
             line_xmax = 0;
@@ -3203,7 +3203,8 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
                 xassert(Glyph->OffsetY == 0);
 
                 int glyph_px_x = (GlyphX * x_scale) >> 22;
-                int glyph_px_y = (GlyphY * y_scale) >> 22;
+                // int glyph_px_y = (GlyphY * y_scale) >> 22;
+                int glyph_px_y = GlyphY >> 6;
 
                 xassert(glyph_px_x >= 0);
                 xassert(glyph_px_y >= 0);
