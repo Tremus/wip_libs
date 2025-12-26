@@ -894,8 +894,7 @@ static int nvgLayoutGetHeight(const NVGcontext* ctx, const NVGtextLayout* l)
 {
     int range = l->ascender - l->descender;
     int gap = l->line_height - range;
-
-    int total_height = l->num_rows * range + (l->num_rows-1) * gap;
+    int total_height = l->num_rows * l->line_height - gap;
     return total_height;
 }
 

@@ -3110,6 +3110,11 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
         text_end = text_start + strlen(text_start);
     const size_t text_len = text_end - text_start;
 
+    font_size     *= ctx->backingScaleFactor;
+    breakRowWidth *= ctx->backingScaleFactor;
+
+    ctx->state.fontSize = font_size;
+
     NVGtextLayout* layout = linked_arena_alloc_clear(ctx->arena, sizeof(*layout));
     layout->cap_glyphs    = text_len * 2;
     
@@ -3128,7 +3133,7 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
 
 #if defined(NVG_FONT_FREETYPE)
     FT_FaceRec* face = ctx->ft_face;
-    FT_Set_Pixel_Sizes(face, 0, ctx->state.fontSize * ctx->backingScaleFactor);
+    FT_Set_Pixel_Sizes(face, 0, font_size);
 
     const FT_Size_Metrics* m = &face->size->metrics;
 
@@ -3139,10 +3144,9 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
     int64_t x_scale = m->x_scale;
     int64_t y_scale = m->y_scale;
 
-    layout->ascender  = m->ascender >> 6;
-    layout->descender = m->descender >> 6;
-    // layout->height          = m->height >> 6;
-    layout->line_height             = line_height >> 6;
+    layout->ascender    = m->ascender >> 6;
+    layout->descender   = m->descender >> 6;
+    layout->line_height = line_height >> 6;
 #endif
 #if defined(NVG_FONT_STB_TRUETYPE)
     // TODO: stbtt
@@ -3196,6 +3200,7 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
             {
                 int64_t GlyphX = CursorX + Glyph->OffsetX;
                 int64_t GlyphY = CursorY + Glyph->OffsetY;
+                xassert(Glyph->OffsetY == 0);
 
                 int glyph_px_x = (GlyphX * x_scale) >> 22;
                 int glyph_px_y = (GlyphY * y_scale) >> 22;
@@ -3203,7 +3208,7 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
                 xassert(glyph_px_x >= 0);
                 xassert(glyph_px_y >= 0);
 
-                const NVGatlasRect* rect = nvg__getGlyph(ctx, Glyph->Id, ctx->state.fontSize);
+                const NVGatlasRect* rect = nvg__getGlyph(ctx, Glyph->Id, font_size);
 
                 bool add_to_metadata  = layout->num_glyphs < layout->cap_glyphs;
                 add_to_metadata      &= rect->img_view.id != 0;
@@ -3225,6 +3230,7 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
             }
             }
 
+            xassert(Glyph->AdvanceY == 0);
             CursorX += Glyph->AdvanceX;
             CursorY += Glyph->AdvanceY;
         }
@@ -3280,6 +3286,7 @@ void nvgDrawLayout(NVGcontext* ctx, const NVGtextLayout* layout, int x, int y)
     // requested
     // If we use the ascender/descender metrics from Freetype, then there is always a little bit og padding. The padding
     // actually looks good, but it strips some control from the user
+    int height = nvgLayoutGetHeight(ctx, layout);
     if (alignment & NVG_ALIGN_MIDDLE)
     {
         // y += text_ymax;
@@ -3287,8 +3294,8 @@ void nvgDrawLayout(NVGcontext* ctx, const NVGtextLayout* layout, int x, int y)
         // y -= ascent / 2;
         // y += layout->ascender;
         // y -= layout->height / 2;
-        y += layout->ascender;
-        y -= nvgLayoutGetHeight(ctx, layout) / 2;
+        y += (layout->ascender - (height / 2));
+        // y -= nvgLayoutGetHeight(ctx, layout) / 2;
         // y -= ((layout->num_rows-1) * layout->line_height) / 2;
     }
     else if (alignment & NVG_ALIGN_TOP)
@@ -3300,7 +3307,7 @@ void nvgDrawLayout(NVGcontext* ctx, const NVGtextLayout* layout, int x, int y)
     {
         // y += layout->rows[layout->num_rows - 1].ymin;
         // y += (layout->num_rows - 1) * layout->font_size_height;
-        y += layout->descender;
+        y += (layout->ascender - height);
     }
     // NVGglyphPosition2(*view_glyphs)[512] = (void*)layout->glyphs;
     // NVG_ASSERT(layout->num_rows == 1);
