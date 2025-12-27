@@ -686,7 +686,7 @@ typedef union NVGatlasRectHeader
 {
     struct
     {
-        uint32_t glyphid;
+        uint32_t glyph_index;
         // TODO: this could probably be packed into an integer. To support sizes like 12.25, multiply & divide by 4
         float font_size;
     };
@@ -701,6 +701,9 @@ typedef struct NVGatlasRect
 
     int16_t bearing_x;
     int16_t bearing_y;
+
+    int16_t advance_x;
+    int16_t advance_y;
 
     sg_view img_view;
 } NVGatlasRect;
@@ -741,6 +744,7 @@ typedef struct NVGcontext
 #ifdef NVG_FONT_FREETYPE
     struct FT_LibraryRec_* ft_lib;
     struct FT_FaceRec_*    ft_face;
+    int                    space_advance;
 #endif
 
 #ifdef NVG_FONT_STB_TRUETYPE
@@ -839,7 +843,6 @@ typedef struct NVGcontext
     sg_view dummyTexView;
 } NVGcontext;
 
-
 typedef struct NVGglyphPosition2
 {
     NVGatlasRect rect;
@@ -849,8 +852,9 @@ typedef struct NVGglyphPosition2
 typedef struct NVGtextLayoutRow
 {
     // Indexes into glyphs array in struct NVGtextLayout below
-    int begin_idx, end_idx;
-    int ymin, ymax;
+    short begin_idx, end_idx;
+    short ymin, ymax;
+    short xmin, xmax;
 } NVGtextLayoutRow;
 
 // Glyphs are shaped and aligned from left > right along the baseline of row one
@@ -863,9 +867,9 @@ typedef struct NVGtextLayout
     // WARNING: this values are scaled accorting to ctx->backingScaleFactor
     // You are free to use them, however you may need to remember to divide by backingScaleFactor to your work in your
     // own pixel space
-    int ascender, descender;
-    int line_height;
-    int xmax; // The right edge of the longest (in pixels) row
+    short ascender, descender;
+    short line_height;
+    short xmax; // The right edge of the longest (in pixels) row
 
     int num_rows, cap_rows;
     int num_glyphs, cap_glyphs;
@@ -877,27 +881,27 @@ static NVGtextLayoutRow* nvgLayoutGetRows(const NVGtextLayout* l)
 {
     return (NVGtextLayoutRow*)((char*)l + l->offset_rows);
 }
-static void nvgLayoutSetRows(NVGtextLayout* l, NVGtextLayoutRow* r)
-{
-    l->offset_rows = ((char*)r - (char*)l);
-}
+static void nvgLayoutSetRows(NVGtextLayout* l, NVGtextLayoutRow* r) { l->offset_rows = ((char*)r - (char*)l); }
 static NVGglyphPosition2* nvgLayoutGetGlyphs(const NVGtextLayout* l)
 {
     return (NVGglyphPosition2*)((char*)l + l->offset_glyphs);
 }
-static void nvgLayoutSetGlyphs(NVGtextLayout* l, NVGglyphPosition2* g)
-{
-    l->offset_glyphs = ((char*)g - (char*)l);
-}
+static void nvgLayoutSetGlyphs(NVGtextLayout* l, NVGglyphPosition2* g) { l->offset_glyphs = ((char*)g - (char*)l); }
 
 static int nvgLayoutGetHeight(const NVGcontext* ctx, const NVGtextLayout* l)
 {
-    int range = l->ascender - l->descender;
-    int gap = l->line_height - range;
-    int total_height = l->num_rows * l->line_height - gap;
-    return total_height;
-}
+    // int range = l->ascender - l->descender;
+    // int gap = l->line_height - range;
+    // int total_height = l->num_rows * l->line_height - gap;
+    // return total_height;
 
+    const NVGglyphPosition2* g = nvgLayoutGetGlyphs(l);
+    // const NVGtextLayoutRow* r = nvgLayoutGetRows(l);
+    int top     = -l->ascender;
+    int bottom  = g[l->num_glyphs - 1].y;
+    bottom     -= l->descender;
+    return bottom - top;
+}
 
 NVGcontext* nvgCreateContext(int flags);
 void        nvgDestroyContext(NVGcontext* ctx);
@@ -1415,13 +1419,16 @@ void nvgTextBoxBounds(
 //     NVGtextRow* rows,
 //     int         maxRows);
 
+// High quality layout using kb_text_shaping. This is slow so you should probably cache the results
 const NVGtextLayout*
-     nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, float font_size, float breakRowWidth);
-void nvgDrawLayout(NVGcontext* ctx, const NVGtextLayout* layout, int x, int y);
-static void nvgReleaseLayout(NVGcontext* ctx, const NVGtextLayout* layout)
-{
-    linked_arena_release(ctx->arena, layout);
-}
+nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, float font_size, float breakRowWidth);
+// Lower quality, but still looks fairly good.
+// Suitable for realtime text layout, like short updating labels (eg. -3.14 dB)
+const NVGtextLayout*
+nvgMakeLayoutFast(NVGcontext* ctx, const char* start, const char* end, float font_size, float breakRowWidth);
+
+void        nvgDrawLayout(NVGcontext* ctx, const NVGtextLayout* layout, int x, int y);
+static void nvgReleaseLayout(NVGcontext* ctx, const NVGtextLayout* layout) { linked_arena_release(ctx->arena, layout); }
 
 sg_image sg_make_image_with_mipmaps(const sg_image_desc* desc_);
 
