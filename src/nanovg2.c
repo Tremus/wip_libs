@@ -3123,8 +3123,6 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
     font_size     *= ctx->backingScaleFactor;
     breakRowWidth *= ctx->backingScaleFactor;
 
-    ctx->state.fontSize = font_size;
-
     NVGtextLayout* layout = linked_arena_alloc_clear(ctx->arena, sizeof(*layout));
     layout->cap_glyphs    = text_len * 2;
 
@@ -3295,8 +3293,6 @@ nvgMakeLayoutFast(NVGcontext* ctx, const char* text_start, const char* text_end,
 
     font_size     *= ctx->backingScaleFactor;
     breakRowWidth *= ctx->backingScaleFactor;
-
-    ctx->state.fontSize = font_size;
 
     NVGtextLayout* layout = linked_arena_alloc_clear(ctx->arena, sizeof(*layout));
     layout->cap_glyphs    = text_len * 2;
