@@ -3100,7 +3100,8 @@ void nvg_endRow(NVGcontext* ctx, NVGtextLayout* layout, int ymin, int ymax)
     // NVG_ASSERT(layout->num_rows > 0);
     if (layout->num_rows > 0)
     {
-        NVGtextLayoutRow* row = &nvgLayoutGetRows(layout)[layout->num_rows - 1];
+        NVGtextLayoutRow* rows = nvgLayoutGetRows(layout);
+        NVGtextLayoutRow* row = &rows[layout->num_rows - 1];
 
         if (row->begin_idx != layout->num_glyphs)
         {
@@ -3300,10 +3301,10 @@ nvgMakeLayoutFast(NVGcontext* ctx, const char* text_start, const char* text_end,
     layout->cap_rows = text_len >> 4;
     if (layout->cap_rows < 8)
         layout->cap_rows = 8;
-    NVGglyphPosition2* glyphs = linked_arena_alloc(ctx->arena, sizeof(*glyphs) * layout->cap_glyphs);
     NVGtextLayoutRow*  rows   = linked_arena_alloc_clear(ctx->arena, sizeof(*rows) * layout->cap_rows);
+    NVGglyphPosition2* glyphs = linked_arena_alloc(ctx->arena, sizeof(*glyphs) * layout->cap_glyphs);
+    nvgLayoutSetRows(layout,   rows);
     nvgLayoutSetGlyphs(layout, glyphs);
-    nvgLayoutSetRows(layout, rows);
 
 #if defined(NVG_FONT_FREETYPE)
     FT_FaceRec* face = ctx->ft_face;
@@ -3313,19 +3314,19 @@ nvgMakeLayoutFast(NVGcontext* ctx, const char* text_start, const char* text_end,
 
     int64_t line_height = (double)m->height * ctx->state.lineHeight;
 
-    int64_t x_scale = m->x_scale;
-
     layout->ascender    = m->ascender >> 6;
     layout->descender   = m->descender >> 6;
     layout->line_height = line_height >> 6;
 
     xassert(ctx->space_advance);
-    const int64_t space_advance = FT_MulFix(ctx->space_advance, x_scale) / 2;
+    const int64_t space_advance = FT_MulFix(ctx->space_advance, m->x_scale) / 2;
 #endif
 #if defined(NVG_FONT_STB_TRUETYPE)
     // TODO: stbtt
     xassert(false);
 #endif
+
+    const int64_t break_row_x = breakRowWidth != 0 ? (breakRowWidth  * 64) : INT64_MAX;
 
     int64_t CursorX = 0, CursorY = 0;
     int     line_xmax = 0, line_xmin = 0;
@@ -3335,6 +3336,9 @@ nvgMakeLayoutFast(NVGcontext* ctx, const char* text_start, const char* text_end,
     rows                       = nvg_startRow(ctx, layout);
     const char* iter           = text_start;
     unsigned    prev_glyph_idx = 0;
+
+    int     num_glyphs_at_last_space = 0;
+    int64_t CursorX_after_last_space = 0;
     while (iter != text_end)
     {
         int cp = 0;
@@ -3342,25 +3346,28 @@ nvgMakeLayoutFast(NVGcontext* ctx, const char* text_start, const char* text_end,
 
         switch (cp)
         {
+        // case 32: // SP, space
         case 10: // LF, \n
-            // case 32: // SP, space
-            {
-                int text_px_right = (CursorX * x_scale) >> 22;
-                if (text_px_right > layout_xmax)
-                    layout_xmax = text_px_right;
+        {
+            int end_row_px_x = CursorX >> 6;
+            layout_xmax = nvg__maxi(layout_xmax, end_row_px_x);
 
-                prev_glyph_idx  = 0;
-                CursorX         = 0;
-                CursorY        += line_height;
+            nvg_endRow(ctx, layout, line_ymin, line_ymax);
+            rows = nvg_startRow(ctx, layout);
+            
+            prev_glyph_idx = 0;
+            line_xmin      = 0;
+            line_xmax      = 0;
+            line_ymin      = 0;
+            line_ymax      = 0;
 
-                nvg_endRow(ctx, layout, line_ymin, line_ymax);
-                line_xmin = 0;
-                line_xmax = 0;
-                line_ymin = 0;
-                line_ymax = 0;
-                rows      = nvg_startRow(ctx, layout);
-                break;
-            }
+            num_glyphs_at_last_space = 0;
+            CursorX_after_last_space = 0;
+
+            CursorX  = 0;
+            CursorY += line_height;
+            break;
+        }
         default:
         {
             unsigned glyph_idx = FT_Get_Char_Index(face, cp);
@@ -3374,11 +3381,8 @@ nvgMakeLayoutFast(NVGcontext* ctx, const char* text_start, const char* text_end,
             bool add_to_metadata  = layout->num_glyphs < layout->cap_glyphs;
             add_to_metadata      &= rect->img_view.id != 0;
 
-            int glyph_ymax = rect->bearing_y;
-            int glyph_ymin = glyph_ymax - rect->h;
-
-            line_ymax = xm_maxi(glyph_ymax, line_ymax);
-            line_ymin = xm_mini(glyph_ymin, line_ymin);
+            line_ymax = xm_maxi(line_ymax, rect->bearing_y);
+            line_ymin = xm_mini(line_ymin, rect->bearing_y - rect->h);
 
             // TODO: handle word breaking here
 
@@ -3392,13 +3396,87 @@ nvgMakeLayoutFast(NVGcontext* ctx, const char* text_start, const char* text_end,
             CursorX        += rect->advance_x ? rect->advance_x : space_advance;
             CursorX        += ftKerning.x;
             prev_glyph_idx  = glyph_idx;
+
+            if (cp == 32) // space
+            {
+                num_glyphs_at_last_space = layout->num_glyphs;
+                CursorX_after_last_space = CursorX;
+            }
+
+            if (CursorX > break_row_x)
+            {
+                // Break word
+                xassert(layout->num_rows);
+                xassert(num_glyphs_at_last_space <= layout->num_glyphs);
+                nvg_endRow(ctx, layout, line_ymin, line_ymax);
+                rows = nvg_startRow(ctx, layout);
+
+                NVGtextLayoutRow* prev_row    = &rows[layout->num_rows-2];
+                NVGtextLayoutRow* current_row = &rows[layout->num_rows-1];
+
+                prev_glyph_idx = 0;
+                line_xmin      = 0;
+                line_xmax      = 0;
+                line_ymin      = 0;
+                line_ymax      = 0;
+
+                int end_idx = -1;
+                if (num_glyphs_at_last_space > 0)
+                {
+                    xassert(layout->num_rows >= 2);
+                    NVGglyphPosition2* break_glyph = &glyphs[num_glyphs_at_last_space-1];   
+
+                    end_idx           = prev_row->end_idx;
+                    prev_row->end_idx = num_glyphs_at_last_space;
+                    prev_row->xmax    = break_glyph->x + break_glyph->rect.advance_x;
+
+                    xassert(prev_row->begin_idx <= prev_row->end_idx);
+                }
+                current_row->begin_idx = num_glyphs_at_last_space;
+                current_row->end_idx   = end_idx > 0 ? end_idx : layout->num_glyphs;
+                xassert(current_row->begin_idx <= current_row->end_idx);
+
+                if (current_row->begin_idx < layout->num_glyphs)
+                {
+                    const int offset_x = glyphs[current_row->begin_idx].x;
+                    for (int i = current_row->begin_idx; i < layout->num_glyphs; i++)
+                    {
+                        NVGglyphPosition2* gp = &glyphs[i];
+                        // Apply offsets to glyphs on new line
+                        gp->x -= offset_x;
+                        gp->y += line_height >> 6;
+                        xassert(gp->x >= 0);
+
+                        // recalculate row stats
+                        line_ymax = xm_maxi(line_ymax, gp->rect.bearing_y);
+                        line_ymin = xm_mini(line_ymin, gp->rect.bearing_y - rect->h);
+                    }
+                }
+                
+                CursorX  = CursorX_after_last_space > 0 ? (CursorX - CursorX_after_last_space) : 0;
+                CursorY += line_height;
+                xassert(CursorX >= 0);
+                
+                num_glyphs_at_last_space = -1;
+                CursorX_after_last_space = -1;
+
+                int num_skipped = 0;
+                while (*iter == ' ') {
+                    iter++;
+                    num_skipped++;
+                }
+                if (num_skipped == 1)
+                    iter--;
+            }
             break;
         }
         }
     }
-    int text_px_right = (CursorX * x_scale) >> 22;
-    if (text_px_right > layout_xmax)
-        layout_xmax = text_px_right;
+    int end_text_px_x = CursorX >> 6;
+    layout_xmax = nvg__maxi(end_text_px_x, layout_xmax);
+    
+    // println("CursorX: %ld", CursorX);
+    // println("CursorX: %ld", layout_xmax);
     rows[layout->num_rows - 1].xmax = line_xmax;
     layout->xmax                    = glyphs[layout->num_glyphs - 1].x + glyphs[layout->num_glyphs - 1].rect.w;
     nvg_endRow(ctx, layout, line_ymin, line_ymax);
