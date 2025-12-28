@@ -3452,14 +3452,17 @@ nvgMakeLayoutFast(NVGcontext* ctx, const char* text_start, const char* text_end,
                         line_ymin = xm_mini(line_ymin, gp->rect.bearing_y - rect->h);
                     }
                 }
-                
+                layout_xmax = nvg__maxi(layout_xmax, CursorX_after_last_space >> 6);
+
                 CursorX  = CursorX_after_last_space > 0 ? (CursorX - CursorX_after_last_space) : 0;
                 CursorY += line_height;
                 xassert(CursorX >= 0);
-                
+
                 num_glyphs_at_last_space = -1;
                 CursorX_after_last_space = -1;
 
+                // This awful looking code helps to skip multiple spaces that may appear at the beginning  of a new line
+                // A more clever person than I could probably express this better
                 int num_skipped = 0;
                 while (*iter == ' ') {
                     iter++;
@@ -3474,11 +3477,9 @@ nvgMakeLayoutFast(NVGcontext* ctx, const char* text_start, const char* text_end,
     }
     int end_text_px_x = CursorX >> 6;
     layout_xmax = nvg__maxi(end_text_px_x, layout_xmax);
-    
-    // println("CursorX: %ld", CursorX);
-    // println("CursorX: %ld", layout_xmax);
+
     rows[layout->num_rows - 1].xmax = line_xmax;
-    layout->xmax                    = glyphs[layout->num_glyphs - 1].x + glyphs[layout->num_glyphs - 1].rect.w;
+    layout->xmax = layout_xmax;
     nvg_endRow(ctx, layout, line_ymin, line_ymax);
     NVG_ASSERT(layout->num_rows);
     NVG_ASSERT(layout->num_glyphs);
