@@ -249,7 +249,7 @@ enum NVGalign
 {
     // Horizontal align
     NVG_ALIGN_LEFT   = 0,      // Default, align text horizontally to left.
-    NVG_ALIGN_CENTER = 1 << 0, // Align text horizontally to center.
+    NVG_ALIGN_CENTRE = 1 << 0, // Align text horizontally to centre.
     NVG_ALIGN_RIGHT  = 1 << 1, // Align text horizontally to right.
                                // Vertical align
 
@@ -258,17 +258,35 @@ enum NVGalign
     NVG_ALIGN_MIDDLE   = 1 << 3, // Align text vertically to middle.
     NVG_ALIGN_BOTTOM   = 1 << 4, // Align text vertically to bottom.
 
+    // The following use ascender and descender information from the glyphs in the top & bottom rows to calculate a
+    // centre alignment
+    NVG_ALIGN_TOP_TIGHT    = 1 << 5,
+    NVG_ALIGN_MIDDLE_TIGHT = 1 << 6,
+    NVG_ALIGN_BOTTOM_TIGHT = 1 << 7,
+
     NVG_ALIGN_TL = (NVG_ALIGN_TOP | NVG_ALIGN_LEFT),
-    NVG_ALIGN_TC = (NVG_ALIGN_TOP | NVG_ALIGN_CENTER),
+    NVG_ALIGN_TC = (NVG_ALIGN_TOP | NVG_ALIGN_CENTRE),
     NVG_ALIGN_TR = (NVG_ALIGN_TOP | NVG_ALIGN_RIGHT),
 
     NVG_ALIGN_CL = (NVG_ALIGN_MIDDLE | NVG_ALIGN_LEFT),
-    NVG_ALIGN_CC = (NVG_ALIGN_MIDDLE | NVG_ALIGN_CENTER),
+    NVG_ALIGN_CC = (NVG_ALIGN_MIDDLE | NVG_ALIGN_CENTRE),
     NVG_ALIGN_CR = (NVG_ALIGN_MIDDLE | NVG_ALIGN_RIGHT),
 
     NVG_ALIGN_BL = (NVG_ALIGN_BOTTOM | NVG_ALIGN_LEFT),
-    NVG_ALIGN_BC = (NVG_ALIGN_BOTTOM | NVG_ALIGN_CENTER),
+    NVG_ALIGN_BC = (NVG_ALIGN_BOTTOM | NVG_ALIGN_CENTRE),
     NVG_ALIGN_BR = (NVG_ALIGN_BOTTOM | NVG_ALIGN_RIGHT),
+
+    NVG_ALIGN_TL_TIGHT = (NVG_ALIGN_TOP_TIGHT | NVG_ALIGN_LEFT),
+    NVG_ALIGN_TC_TIGHT = (NVG_ALIGN_TOP_TIGHT | NVG_ALIGN_CENTRE),
+    NVG_ALIGN_TR_TIGHT = (NVG_ALIGN_TOP_TIGHT | NVG_ALIGN_RIGHT),
+
+    NVG_ALIGN_CL_TIGHT = (NVG_ALIGN_MIDDLE_TIGHT | NVG_ALIGN_LEFT),
+    NVG_ALIGN_CC_TIGHT = (NVG_ALIGN_MIDDLE_TIGHT | NVG_ALIGN_CENTRE),
+    NVG_ALIGN_CR_TIGHT = (NVG_ALIGN_MIDDLE_TIGHT | NVG_ALIGN_RIGHT),
+
+    NVG_ALIGN_BL_TIGHT = (NVG_ALIGN_BOTTOM_TIGHT | NVG_ALIGN_LEFT),
+    NVG_ALIGN_BC_TIGHT = (NVG_ALIGN_BOTTOM_TIGHT | NVG_ALIGN_CENTRE),
+    NVG_ALIGN_BR_TIGHT = (NVG_ALIGN_BOTTOM_TIGHT | NVG_ALIGN_RIGHT),
 };
 
 enum NVGblendFactor
@@ -855,6 +873,7 @@ typedef struct NVGtextLayoutRow
     short begin_idx, end_idx;
     short ymin, ymax;
     short xmin, xmax;
+    int   cursor_y_px;
 } NVGtextLayoutRow;
 
 // Glyphs are shaped and aligned from left > right along the baseline of row one
@@ -870,6 +889,9 @@ typedef struct NVGtextLayout
     short ascender, descender;
     short line_height;
     short xmax; // The right edge of the longest (in pixels) row
+
+    int total_height;
+    int total_height_tight;
 
     int num_rows, cap_rows;
     int num_glyphs, cap_glyphs;
@@ -887,21 +909,6 @@ static NVGglyphPosition2* nvgLayoutGetGlyphs(const NVGtextLayout* l)
     return (NVGglyphPosition2*)((char*)l + l->offset_glyphs);
 }
 static void nvgLayoutSetGlyphs(NVGtextLayout* l, NVGglyphPosition2* g) { l->offset_glyphs = ((char*)g - (char*)l); }
-
-static int nvgLayoutGetHeight(const NVGcontext* ctx, const NVGtextLayout* l)
-{
-    // int range = l->ascender - l->descender;
-    // int gap = l->line_height - range;
-    // int total_height = l->num_rows * l->line_height - gap;
-    // return total_height;
-
-    const NVGglyphPosition2* g = nvgLayoutGetGlyphs(l);
-    // const NVGtextLayoutRow* r = nvgLayoutGetRows(l);
-    int top     = -l->ascender;
-    int bottom  = g[l->num_glyphs - 1].y;
-    bottom     -= l->descender;
-    return bottom - top;
-}
 
 NVGcontext* nvgCreateContext(int flags);
 void        nvgDestroyContext(NVGcontext* ctx);
@@ -1154,7 +1161,7 @@ NVGpaint nvgLinearGradient(NVGcontext* ctx, float sx, float sy, float ex, float 
 NVGpaint
 nvgBoxGradient(NVGcontext* ctx, float x, float y, float w, float h, float r, float f, NVGcolour icol, NVGcolour ocol);
 
-// Creates and returns a radial gradient. Parameters (cx,cy) specify the center, inr and outr specify
+// Creates and returns a radial gradient. Parameters (cx,cy) specify the centre, inr and outr specify
 // the inner and outer radius of the gradient, icol specifies the start colour and ocol the end colour.
 // The gradient is transformed by the current transform when it is passed to nvgSetPaint().
 NVGpaint nvgRadialGradient(NVGcontext* ctx, float cx, float cy, float inr, float outr, NVGcolour icol, NVGcolour ocol);
@@ -1234,7 +1241,7 @@ void nvgClosePath(NVGcontext* ctx);
 // Sets the current sub-path winding, see NVGwinding and NVGsolidity.
 void nvgSetPathWinding(NVGcontext* ctx, int dir);
 
-// Creates new circle arc shaped sub-path. The arc center is at cx,cy, the arc radius is r,
+// Creates new circle arc shaped sub-path. The arc centre is at cx,cy, the arc radius is r,
 // and the arc is drawn from angle a0 to a1, and swept in direction dir (NVG_CCW, or NVG_CW).
 // Angles are specified in radians.
 void nvgArc(NVGcontext* ctx, float cx, float cy, float r, float a0, float a1, int dir);

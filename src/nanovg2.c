@@ -3093,20 +3093,24 @@ NVGtextLayoutRow* nvg_startRow(NVGcontext* ctx, NVGtextLayout* layout)
     return rows;
 }
 
-void nvg_endRow(NVGcontext* ctx, NVGtextLayout* layout, int ymin, int ymax)
+void nvg_endRow(NVGcontext* ctx, NVGtextLayout* layout, int ymin, int ymax, int cursor_y_px)
 {
     // NVG_ASSERT(layout->num_rows > 0);
     if (layout->num_rows > 0)
     {
-        NVGtextLayoutRow* rows = nvgLayoutGetRows(layout);
-        NVGtextLayoutRow* row  = &rows[layout->num_rows - 1];
+        NVGtextLayoutRow*  rows   = nvgLayoutGetRows(layout);
+        NVGglyphPosition2* glyphs = nvgLayoutGetGlyphs(layout);
+        NVGglyphPosition2* g      = &glyphs[layout->num_glyphs - 1];
+        NVGtextLayoutRow*  row    = &rows[layout->num_rows - 1];
 
         if (row->begin_idx != layout->num_glyphs)
         {
             NVG_ASSERT(ymax != 0 || ymin != 0);
-            row->end_idx = layout->num_glyphs;
-            row->ymin    = ymin;
-            row->ymax    = ymax;
+            row->end_idx     = layout->num_glyphs;
+            row->ymin        = ymin;
+            row->ymax        = ymax;
+            row->xmax        = g->x + g->rect.w;
+            row->cursor_y_px = cursor_y_px;
         }
     }
 }
@@ -3178,19 +3182,17 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
     {
         if (Run.Flags & KBTS_BREAK_FLAG_LINE)
         {
-            int text_px_right = (CursorX * x_scale) >> 22;
-            if (text_px_right > layout_xmax)
-                layout_xmax = text_px_right;
+            layout_xmax = xm_maxi(layout_xmax, line_xmax);
 
-            CursorX  = 0;
-            CursorY += line_height;
+            nvg_endRow(ctx, layout, line_ymin, line_ymax, CursorY >> 6);
 
-            nvg_endRow(ctx, layout, line_ymin, line_ymax);
-            line_xmin = 0;
-            line_xmax = 0;
-            line_ymin = 0;
-            line_ymax = 0;
-            rows      = nvg_startRow(ctx, layout);
+            CursorX    = 0;
+            CursorY   += line_height;
+            line_xmin  = 0;
+            line_xmax  = 0;
+            line_ymin  = 0;
+            line_ymax  = 0;
+            rows       = nvg_startRow(ctx, layout);
         }
         kbts_glyph* Glyph;
         while (kbts_GlyphIteratorNext(&Run.Glyphs, &Glyph))
@@ -3202,32 +3204,32 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
                 break;
             default:
             {
-                int64_t GlyphX = CursorX + Glyph->OffsetX;
-                int64_t GlyphY = CursorY + Glyph->OffsetY;
-                xassert(Glyph->OffsetY == 0);
-
-                int glyph_px_x = (GlyphX * x_scale) >> 22;
-                // int glyph_px_y = (GlyphY * y_scale) >> 22;
-                int glyph_px_y = GlyphY >> 6;
-
-                xassert(glyph_px_x >= 0);
-                xassert(glyph_px_y >= 0);
-
-                const NVGatlasRect* rect = nvg__getGlyph(ctx, Glyph->Id, font_size);
-
-                bool add_to_metadata  = layout->num_glyphs < layout->cap_glyphs;
-                add_to_metadata      &= rect->img_view.id != 0;
-
-                int glyph_ymax = rect->bearing_y;
-                int glyph_ymin = glyph_ymax - rect->h;
-
-                line_ymax = xm_maxi(glyph_ymax, line_ymax);
-                line_ymin = xm_mini(glyph_ymin, line_ymin);
+                const NVGatlasRect* rect             = nvg__getGlyph(ctx, Glyph->Id, font_size);
+                bool                add_to_metadata  = layout->num_glyphs < layout->cap_glyphs;
+                add_to_metadata                     &= rect->img_view.id != 0;
 
                 // TODO: handle word breaking here
 
                 if (add_to_metadata)
                 {
+                    int64_t GlyphX = CursorX + Glyph->OffsetX;
+                    int64_t GlyphY = CursorY + Glyph->OffsetY;
+                    xassert(Glyph->OffsetY == 0);
+
+                    int glyph_px_x = (GlyphX * x_scale) >> 22;
+                    // int glyph_px_y = (GlyphY * y_scale) >> 22;
+                    int glyph_px_y = GlyphY >> 6;
+
+                    xassert(glyph_px_x >= 0);
+                    xassert(glyph_px_y >= 0);
+
+                    int glyph_ymax = rect->bearing_y;
+                    int glyph_ymin = glyph_ymax - rect->h;
+
+                    line_ymax = xm_maxi(glyph_ymax, line_ymax);
+                    line_ymin = xm_mini(glyph_ymin, line_ymin);
+                    line_xmax = xm_maxi(glyph_px_x, rect->w);
+
                     glyphs[layout->num_glyphs++] = (NVGglyphPosition2){.x = glyph_px_x, .y = glyph_px_y, .rect = *rect};
                 }
                 break;
@@ -3244,7 +3246,7 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
 
     rows[layout->num_rows - 1].xmax = line_xmax;
     layout->xmax                    = layout_xmax;
-    nvg_endRow(ctx, layout, line_ymin, line_ymax);
+    nvg_endRow(ctx, layout, line_ymin, line_ymax, CursorY >> 6);
     NVG_ASSERT(layout->num_rows);
     NVG_ASSERT(layout->num_glyphs);
     NVG_ASSERT(rows[0].begin_idx < rows[0].end_idx);
@@ -3350,10 +3352,9 @@ nvgMakeLayoutFast(NVGcontext* ctx, const char* text_start, const char* text_end,
         // case 32: // SP, space
         case 10: // LF, \n
         {
-            int end_row_px_x = CursorX >> 6;
-            layout_xmax      = nvg__maxi(layout_xmax, end_row_px_x);
+            layout_xmax = nvg__maxi(layout_xmax, line_xmax);
 
-            nvg_endRow(ctx, layout, line_ymin, line_ymax);
+            nvg_endRow(ctx, layout, line_ymin, line_ymax, CursorY >> 6);
             rows = nvg_startRow(ctx, layout);
 
             prev_glyph_idx = 0;
@@ -3373,29 +3374,28 @@ nvgMakeLayoutFast(NVGcontext* ctx, const char* text_start, const char* text_end,
         {
             unsigned glyph_idx = FT_Get_Char_Index(face, cp);
             xassert(glyph_idx != 0);
-            int glyph_px_x = CursorX >> 6;
-            int glyph_px_y = CursorY >> 6;
-            xassert(glyph_px_x >= 0);
 
             const NVGatlasRect* rect = nvg__getGlyph(ctx, glyph_idx, font_size);
 
             bool add_to_metadata  = layout->num_glyphs < layout->cap_glyphs;
             add_to_metadata      &= rect->img_view.id != 0;
 
-            line_ymax = xm_maxi(line_ymax, rect->bearing_y);
-            line_ymin = xm_mini(line_ymin, rect->bearing_y - rect->h);
-
-            // TODO: handle word breaking here
-
             if (add_to_metadata)
             {
+                line_ymax = xm_maxi(line_ymax, rect->bearing_y);
+                line_ymin = xm_mini(line_ymin, rect->bearing_y - rect->h);
+                FT_Vector kerning;
+                FT_Get_Kerning(face, prev_glyph_idx, glyph_idx, FT_KERNING_DEFAULT, &kerning);
+                int glyph_px_x = (CursorX + kerning.x) >> 6;
+                int glyph_px_y = (CursorY + kerning.y) >> 6;
+                NVG_ASSERT(glyph_px_x >= 0);
+
+                line_xmax = nvg__maxi(line_xmax, glyph_px_x + rect->w);
+
                 glyphs[layout->num_glyphs++] = (NVGglyphPosition2){.x = glyph_px_x, .y = glyph_px_y, .rect = *rect};
             }
-            FT_Vector ftKerning;
-            FT_Get_Kerning(face, prev_glyph_idx, glyph_idx, FT_KERNING_DEFAULT, &ftKerning);
 
             CursorX        += rect->advance_x ? rect->advance_x : space_advance;
-            CursorX        += ftKerning.x;
             prev_glyph_idx  = glyph_idx;
 
             if (cp == 32) // space
@@ -3409,7 +3409,7 @@ nvgMakeLayoutFast(NVGcontext* ctx, const char* text_start, const char* text_end,
                 // Break word
                 xassert(layout->num_rows);
                 xassert(num_glyphs_at_last_space <= layout->num_glyphs);
-                nvg_endRow(ctx, layout, line_ymin, line_ymax);
+                nvg_endRow(ctx, layout, line_ymin, line_ymax, (CursorY + line_height) >> 6);
                 rows = nvg_startRow(ctx, layout);
 
                 NVGtextLayoutRow* prev_row    = &rows[layout->num_rows - 2];
@@ -3429,9 +3429,10 @@ nvgMakeLayoutFast(NVGcontext* ctx, const char* text_start, const char* text_end,
 
                     end_idx           = prev_row->end_idx;
                     prev_row->end_idx = num_glyphs_at_last_space;
-                    prev_row->xmax    = break_glyph->x + break_glyph->rect.advance_x;
+                    prev_row->xmax    = break_glyph->x + break_glyph->rect.w;
 
                     xassert(prev_row->begin_idx <= prev_row->end_idx);
+                    layout_xmax = nvg__maxi(layout_xmax, prev_row->xmax);
                 }
                 current_row->begin_idx = num_glyphs_at_last_space;
                 current_row->end_idx   = end_idx > 0 ? end_idx : layout->num_glyphs;
@@ -3445,15 +3446,16 @@ nvgMakeLayoutFast(NVGcontext* ctx, const char* text_start, const char* text_end,
                         NVGglyphPosition2* gp = &glyphs[i];
                         // Apply offsets to glyphs on new line
                         gp->x -= offset_x;
-                        gp->y += line_height >> 6;
+                        gp->y  = (CursorY + line_height) >> 6;
                         xassert(gp->x >= 0);
 
                         // recalculate row stats
                         line_ymax = xm_maxi(line_ymax, gp->rect.bearing_y);
                         line_ymin = xm_mini(line_ymin, gp->rect.bearing_y - rect->h);
+                        line_xmax = xm_maxi(line_xmax, gp->x + gp->rect.w);
                     }
                 }
-                layout_xmax = nvg__maxi(layout_xmax, CursorX_after_last_space >> 6);
+                layout_xmax = nvg__maxi(layout_xmax, line_xmax);
 
                 CursorX  = CursorX_after_last_space > 0 ? (CursorX - CursorX_after_last_space) : 0;
                 CursorY += line_height;
@@ -3477,12 +3479,34 @@ nvgMakeLayoutFast(NVGcontext* ctx, const char* text_start, const char* text_end,
         }
         }
     }
-    int end_text_px_x = CursorX >> 6;
-    layout_xmax       = nvg__maxi(end_text_px_x, layout_xmax);
+    layout_xmax = nvg__maxi(layout_xmax, line_xmax);
+    nvg_endRow(ctx, layout, line_ymin, line_ymax, CursorY >> 6);
+    layout->xmax = layout_xmax;
 
-    rows[layout->num_rows - 1].xmax = line_xmax;
-    layout->xmax                    = layout_xmax;
-    nvg_endRow(ctx, layout, line_ymin, line_ymax);
+    layout->total_height       = (CursorY + (m->ascender - m->descender)) >> 6;
+    int row_0_top              = rows[0].ymax;
+    int row_n_1_bottom         = rows[layout->num_rows - 1].ymin - rows[layout->num_rows - 1].cursor_y_px;
+    layout->total_height_tight = row_0_top - row_n_1_bottom;
+
+#ifndef NDEBUG
+    int64_t break_row_x_px = break_row_x >> 6;
+    int     xmax_2         = 0;
+    for (int i = 0; i < layout->num_rows; i++)
+    {
+        const NVGtextLayoutRow* r = rows + i;
+        NVG_ASSERT(layout_xmax >= r->xmax);
+        for (int j = r->begin_idx; j < r->end_idx; j++)
+        {
+            const NVGglyphPosition2* g  = glyphs + j;
+            int                      gr = g->x + g->rect.w;
+            NVG_ASSERT(gr <= rows[i].xmax);
+            NVG_ASSERT(gr <= break_row_x_px);
+        }
+        xmax_2 = nvg__maxi(xmax_2, r->xmax);
+    }
+    NVG_ASSERT(xmax_2 == layout_xmax);
+#endif
+
     NVG_ASSERT(layout->num_rows);
     NVG_ASSERT(layout->num_glyphs);
     NVG_ASSERT(rows[0].begin_idx < rows[0].end_idx);
@@ -3517,11 +3541,14 @@ void nvgDrawLayout(NVGcontext* ctx, const NVGtextLayout* layout, int x, int y)
     x *= ctx->backingScaleFactor;
     y *= ctx->backingScaleFactor;
 
+    const NVGtextLayoutRow* rows = nvgLayoutGetRows(layout);
+
     int text_px_right = layout->xmax;
 
     const int alignment = ctx->state.textAlign;
-    if (alignment & NVG_ALIGN_CENTER)
-        x -= text_px_right / 2;
+    // TODO: handle multi-line centre & right alignmnt
+    if (alignment & NVG_ALIGN_CENTRE)
+        x -= (text_px_right / 2);
     else if (alignment & NVG_ALIGN_RIGHT)
         x -= text_px_right;
 
@@ -3529,29 +3556,33 @@ void nvgDrawLayout(NVGcontext* ctx, const NVGtextLayout* layout, int x, int y)
     // requested
     // If we use the ascender/descender metrics from Freetype, then there is always a little bit og padding. The padding
     // actually looks good, but it strips some control from the user
-    int height = nvgLayoutGetHeight(ctx, layout);
     if (alignment & NVG_ALIGN_MIDDLE)
     {
-        // y += text_ymax;
-        // y -= (text_ymax - text_ymin) / 2;
-        // y -= ascent / 2;
-        // y += layout->ascender;
-        // y -= layout->height / 2;
-        y += (layout->ascender - (height / 2));
-        // y -= nvgLayoutGetHeight(ctx, layout) / 2;
-        // y -= ((layout->num_rows-1) * layout->line_height) / 2;
+        y += (layout->ascender - (layout->total_height / 2));
     }
     else if (alignment & NVG_ALIGN_TOP)
     {
-        // y += layout->rows[0].ymax;
         y += layout->ascender;
     }
     else if (alignment & NVG_ALIGN_BOTTOM)
     {
-        // y += layout->rows[layout->num_rows - 1].ymin;
-        // y += (layout->num_rows - 1) * layout->font_size_height;
-        y += (layout->ascender - height);
+        y += (layout->ascender - layout->total_height);
     }
+    if (alignment & NVG_ALIGN_MIDDLE_TIGHT)
+    {
+        int half_height_rounded_up  = layout->total_height_tight - (layout->total_height_tight / 2);
+        y                          += rows->ymax - half_height_rounded_up;
+    }
+    else if (alignment & NVG_ALIGN_TOP_TIGHT)
+    {
+        y += rows->ymax;
+    }
+    else if (alignment & NVG_ALIGN_BOTTOM_TIGHT)
+    {
+        const NVGtextLayoutRow* r  = &rows[layout->num_rows - 1];
+        y                         += r->ymin - r->cursor_y_px;
+    }
+
     // NVGglyphPosition2(*view_glyphs)[512] = (void*)layout->glyphs;
     // NVG_ASSERT(layout->num_rows == 1);
 
