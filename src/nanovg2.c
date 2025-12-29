@@ -3078,12 +3078,12 @@ bool nvg__pushGlyph(NVGcontext* ctx, int pen_x, int pen_y, const NVGatlasRect* r
 
 NVGtextLayoutRow* nvg_startRow(NVGcontext* ctx, NVGtextLayout* layout)
 {
-    NVG_ASSERT(layout->num_glyphs <= layout->cap_glyphs);
+    NVG_ASSERT(layout->num_rows <= layout->cap_rows);
     NVGtextLayoutRow* rows = nvgLayoutGetRows(layout);
-    if (layout->num_glyphs >= layout->cap_glyphs)
+    if (layout->num_rows >= layout->cap_rows)
     {
         // realloc
-        layout->cap_glyphs          *= 2;
+        layout->cap_rows            *= 2;
         NVGtextLayoutRow* next_rows  = linked_arena_alloc(ctx->arena, sizeof(*next_rows) * layout->cap_rows);
         memcpy(next_rows, rows, sizeof(*next_rows) * layout->num_rows);
 
@@ -3101,7 +3101,7 @@ void nvg_endRow(NVGcontext* ctx, NVGtextLayout* layout, int ymin, int ymax)
     if (layout->num_rows > 0)
     {
         NVGtextLayoutRow* rows = nvgLayoutGetRows(layout);
-        NVGtextLayoutRow* row = &rows[layout->num_rows - 1];
+        NVGtextLayoutRow* row  = &rows[layout->num_rows - 1];
 
         if (row->begin_idx != layout->num_glyphs)
         {
@@ -3241,11 +3241,11 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
             CursorY += Glyph->AdvanceY;
         }
     }
-    int text_px_right = (CursorX * x_scale) >> 22;
-    if (text_px_right > layout_xmax)
-        layout_xmax = text_px_right;
+    int end_text_px_x = (CursorX * x_scale) >> 22;
+    layout_xmax       = nvg__maxi(end_text_px_x, layout_xmax);
+
     rows[layout->num_rows - 1].xmax = line_xmax;
-    layout->xmax                    = glyphs[layout->num_glyphs - 1].x + glyphs[layout->num_glyphs - 1].rect.w;
+    layout->xmax                    = layout_xmax;
     nvg_endRow(ctx, layout, line_ymin, line_ymax);
     NVG_ASSERT(layout->num_rows);
     NVG_ASSERT(layout->num_glyphs);
@@ -3303,7 +3303,7 @@ nvgMakeLayoutFast(NVGcontext* ctx, const char* text_start, const char* text_end,
         layout->cap_rows = 8;
     NVGtextLayoutRow*  rows   = linked_arena_alloc_clear(ctx->arena, sizeof(*rows) * layout->cap_rows);
     NVGglyphPosition2* glyphs = linked_arena_alloc(ctx->arena, sizeof(*glyphs) * layout->cap_glyphs);
-    nvgLayoutSetRows(layout,   rows);
+    nvgLayoutSetRows(layout, rows);
     nvgLayoutSetGlyphs(layout, glyphs);
 
 #if defined(NVG_FONT_FREETYPE)
@@ -3326,7 +3326,9 @@ nvgMakeLayoutFast(NVGcontext* ctx, const char* text_start, const char* text_end,
     xassert(false);
 #endif
 
-    const int64_t break_row_x = breakRowWidth != 0 ? (breakRowWidth  * 64) : INT64_MAX;
+    // Clang-cl makes INT64_MAX a negative integer if we aren't super explicit with types here
+    const int64_t break_row_x = breakRowWidth != 0 ? (int64_t)(breakRowWidth * 64) : (int64_t)INT64_MAX;
+    xassert(break_row_x >= 0);
 
     int64_t CursorX = 0, CursorY = 0;
     int     line_xmax = 0, line_xmin = 0;
@@ -3350,11 +3352,11 @@ nvgMakeLayoutFast(NVGcontext* ctx, const char* text_start, const char* text_end,
         case 10: // LF, \n
         {
             int end_row_px_x = CursorX >> 6;
-            layout_xmax = nvg__maxi(layout_xmax, end_row_px_x);
+            layout_xmax      = nvg__maxi(layout_xmax, end_row_px_x);
 
             nvg_endRow(ctx, layout, line_ymin, line_ymax);
             rows = nvg_startRow(ctx, layout);
-            
+
             prev_glyph_idx = 0;
             line_xmin      = 0;
             line_xmax      = 0;
@@ -3411,8 +3413,8 @@ nvgMakeLayoutFast(NVGcontext* ctx, const char* text_start, const char* text_end,
                 nvg_endRow(ctx, layout, line_ymin, line_ymax);
                 rows = nvg_startRow(ctx, layout);
 
-                NVGtextLayoutRow* prev_row    = &rows[layout->num_rows-2];
-                NVGtextLayoutRow* current_row = &rows[layout->num_rows-1];
+                NVGtextLayoutRow* prev_row    = &rows[layout->num_rows - 2];
+                NVGtextLayoutRow* current_row = &rows[layout->num_rows - 1];
 
                 prev_glyph_idx = 0;
                 line_xmin      = 0;
@@ -3424,7 +3426,7 @@ nvgMakeLayoutFast(NVGcontext* ctx, const char* text_start, const char* text_end,
                 if (num_glyphs_at_last_space > 0)
                 {
                     xassert(layout->num_rows >= 2);
-                    NVGglyphPosition2* break_glyph = &glyphs[num_glyphs_at_last_space-1];   
+                    NVGglyphPosition2* break_glyph = &glyphs[num_glyphs_at_last_space - 1];
 
                     end_idx           = prev_row->end_idx;
                     prev_row->end_idx = num_glyphs_at_last_space;
@@ -3464,7 +3466,8 @@ nvgMakeLayoutFast(NVGcontext* ctx, const char* text_start, const char* text_end,
                 // This awful looking code helps to skip multiple spaces that may appear at the beginning  of a new line
                 // A more clever person than I could probably express this better
                 int num_skipped = 0;
-                while (*iter == ' ') {
+                while (*iter == ' ')
+                {
                     iter++;
                     num_skipped++;
                 }
@@ -3476,10 +3479,10 @@ nvgMakeLayoutFast(NVGcontext* ctx, const char* text_start, const char* text_end,
         }
     }
     int end_text_px_x = CursorX >> 6;
-    layout_xmax = nvg__maxi(end_text_px_x, layout_xmax);
+    layout_xmax       = nvg__maxi(end_text_px_x, layout_xmax);
 
     rows[layout->num_rows - 1].xmax = line_xmax;
-    layout->xmax = layout_xmax;
+    layout->xmax                    = layout_xmax;
     nvg_endRow(ctx, layout, line_ymin, line_ymax);
     NVG_ASSERT(layout->num_rows);
     NVG_ASSERT(layout->num_glyphs);
