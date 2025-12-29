@@ -193,9 +193,12 @@ void     imgui_clear_widget(imgui_context* ctx);
 
 typedef enum ImguiDragType
 {
-    IMGUI_DRAG_HORIZONTAL_VERTICAL,
-    IMGUI_DRAG_HORIZONTAL,
-    IMGUI_DRAG_VERTICAL,
+    IMGUI_DRAG_HORIZONTAL = 1 << 0,
+    IMGUI_DRAG_VERTICAL   = 1 << 1,
+    IMGUI_DRAG_INVERTED_X = 1 << 2,
+    IMGUI_DRAG_INVERTED_Y = 1 << 3,
+
+    IMGUI_DRAG_HORIZONTAL_VERTICAL = IMGUI_DRAG_HORIZONTAL | IMGUI_DRAG_VERTICAL,
 } ImguiDragType;
 
 void imgui_drag_value(
@@ -552,17 +555,24 @@ void imgui_drag_value(imgui_context* ctx, float* value, float vmin, float vmax, 
     ctx->mouse_last_drag.x = ctx->pos_mouse_move.x;
     ctx->mouse_last_drag.y = ctx->pos_mouse_move.y;
 
+    if (drag_type & IMGUI_DRAG_INVERTED_X)
+        delta_x = -delta_x;
+    if (drag_type & IMGUI_DRAG_INVERTED_Y)
+        delta_y = -delta_y;
+
     float delta_px = 0;
-    switch (drag_type)
+    switch (drag_type & 3)
     {
-    case IMGUI_DRAG_HORIZONTAL_VERTICAL:
-        delta_px = fabsf(delta_x) > fabsf(delta_y) ? delta_x : delta_y;
+    case 0:
         break;
     case IMGUI_DRAG_HORIZONTAL:
         delta_px = delta_x;
         break;
     case IMGUI_DRAG_VERTICAL:
         delta_px = delta_y;
+        break;
+    case IMGUI_DRAG_HORIZONTAL_VERTICAL:
+        delta_px = fabsf(delta_x) > fabsf(delta_y) ? delta_x : delta_y;
         break;
     }
     if (ctx->frame.modifiers_mouse_move & PW_MOD_PLATFORM_KEY_CTRL)
