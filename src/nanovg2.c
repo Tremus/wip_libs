@@ -334,8 +334,6 @@ enum
 _Static_assert(NVG_ATLAS_WIDTH <= (1llu << 16), "");
 _Static_assert((NVG_ATLAS_WIDTH << NVG_ATLAS_UINT16_SHIFT) == (1 << 16), "");
 
-void nvg__renderText(NVGcontext* ctx, NVGvertex* verts, int nverts);
-
 static float nvg__sqrtf(float a) { return sqrtf(a); }
 static float nvg__modf(float a, float b) { return fmodf(a, b); }
 
@@ -3288,6 +3286,7 @@ char* utf8codepoint(const char* str, int* out_codepoint)
 const NVGtextLayout*
 nvgMakeLayoutFast(NVGcontext* ctx, const char* text_start, const char* text_end, float font_size, float breakRowWidth)
 {
+    NVG_ASSERT(font_size < 128);
     if (text_end == NULL)
         text_end = text_start + strlen(text_start);
     const size_t text_len = text_end - text_start;
@@ -4545,6 +4544,73 @@ static void sgnvg__triangles(NVGcontext* ctx, SGNVGcall* call)
     sg_draw(call->triangleOffset, call->triangleCount, 1);
 }
 
+static void sgnvg__renderNVGCalls(NVGcontext* ctx, SGNVGcommandNVG* draws)
+{
+    SGNVGcall* call = draws->calls;
+    int        i;
+
+    for (i = 0; i < draws->num_calls && call != NULL; i++)
+    {
+        ctx->blend.src_factor_rgb   = call->blendFunc.srcRGB;
+        ctx->blend.dst_factor_rgb   = call->blendFunc.dstRGB;
+        ctx->blend.src_factor_alpha = call->blendFunc.srcAlpha;
+        ctx->blend.dst_factor_alpha = call->blendFunc.dstAlpha;
+        ctx->pipelineCacheIndex     = sgnvg__getIndexFromCache(ctx, sgnvg__getCombinedBlendNumber(ctx->blend));
+        switch (call->type)
+        {
+        case SGNVG_NONE:
+            break;
+        case SGNVG_FILL:
+            sgnvg__fill(ctx, call);
+            break;
+        case SGNVG_CONVEXFILL:
+            sgnvg__convexFill(ctx, call);
+            break;
+        case SGNVG_STROKE:
+            sgnvg__stroke(ctx, call);
+            break;
+        case SGNVG_TRIANGLES:
+            sgnvg__triangles(ctx, call);
+            break;
+        }
+
+        call = call->next;
+    }
+    NVG_ASSERT(i == draws->num_calls && call == NULL); // Oh oh, you built the list wrong
+}
+
+static void sgnvg__renderText(NVGcontext* ctx, SGNVGcommandText* cmdText)
+{
+    sg_apply_pipeline(ctx->text_pip);
+
+    sg_bindings bind            = {0};
+    bind.views[VIEW_sb_text]    = ctx->text_sbv;
+    bind.views[VIEW_text_tex]   = cmdText->atlas_view;
+    bind.samplers[SMP_text_smp] = ctx->sampler_nearest; // nearest neighbour
+
+    sg_apply_bindings(&bind);
+
+    vs_text_uniforms_t vs_text_uniforms = {
+        .u_xy_offset =
+            {ctx->view.viewSize[0] * ctx->backingScaleFactor, ctx->view.viewSize[1] * ctx->backingScaleFactor},
+        .u_view_size =
+            {ctx->view.viewSize[2] * ctx->backingScaleFactor, ctx->view.viewSize[3] * ctx->backingScaleFactor},
+        .u_sbo_offset = cmdText->text_buffer_start,
+    };
+    sg_apply_uniforms(UB_vs_text_uniforms, &SG_RANGE(vs_text_uniforms));
+
+    fs_text_singlechannel_t fs_text_singlechannel = {
+        .u_colour[0] = cmdText->colour_fill.rgba[0],
+        .u_colour[1] = cmdText->colour_fill.rgba[1],
+        .u_colour[2] = cmdText->colour_fill.rgba[2],
+        .u_colour[3] = cmdText->colour_fill.rgba[3],
+    };
+    sg_apply_uniforms(UB_fs_text_singlechannel, &SG_RANGE(fs_text_singlechannel));
+
+    int N_draws = cmdText->text_buffer_end - cmdText->text_buffer_start;
+    sg_draw(0, 6 * N_draws, 1);
+}
+
 static sg_blend_factor sgnvg_convertBlendFuncFactor(int factor)
 {
     if (factor == NVG_ZERO)
@@ -4644,75 +4710,11 @@ int snvg_consume_commands(NVGcontext* ctx, SGNVGcommand* cmd)
             sg_end_pass();
             break;
         case SGNVG_CMD_DRAW_NVG:
-        {
-            SGNVGcommandNVG* draws = cmd->payload.drawNVG;
-
-            SGNVGcall* call = draws->calls;
-            int        i;
-
-            for (i = 0; i < draws->num_calls && call != NULL; i++)
-            {
-                ctx->blend.src_factor_rgb   = call->blendFunc.srcRGB;
-                ctx->blend.dst_factor_rgb   = call->blendFunc.dstRGB;
-                ctx->blend.src_factor_alpha = call->blendFunc.srcAlpha;
-                ctx->blend.dst_factor_alpha = call->blendFunc.dstAlpha;
-                ctx->pipelineCacheIndex     = sgnvg__getIndexFromCache(ctx, sgnvg__getCombinedBlendNumber(ctx->blend));
-                switch (call->type)
-                {
-                case SGNVG_NONE:
-                    break;
-                case SGNVG_FILL:
-                    sgnvg__fill(ctx, call);
-                    break;
-                case SGNVG_CONVEXFILL:
-                    sgnvg__convexFill(ctx, call);
-                    break;
-                case SGNVG_STROKE:
-                    sgnvg__stroke(ctx, call);
-                    break;
-                case SGNVG_TRIANGLES:
-                    sgnvg__triangles(ctx, call);
-                    break;
-                }
-
-                call = call->next;
-            }
-            NVG_ASSERT(i == draws->num_calls && call == NULL); // Oh oh, you built the list wrong
+            sgnvg__renderNVGCalls(ctx, cmd->payload.drawNVG);
             break;
-        }
         case SGNVG_CMD_DRAW_TEXT:
-        {
-            SGNVGcommandText* cmdText = cmd->payload.text;
-            sg_apply_pipeline(ctx->text_pip);
-
-            sg_bindings bind            = {0};
-            bind.views[VIEW_sb_text]    = ctx->text_sbv;
-            bind.views[VIEW_text_tex]   = cmdText->atlas_view;
-            bind.samplers[SMP_text_smp] = ctx->sampler_nearest; // nearest neighbour
-
-            sg_apply_bindings(&bind);
-
-            vs_text_uniforms_t vs_text_uniforms = {
-                .u_xy_offset =
-                    {ctx->view.viewSize[0] * ctx->backingScaleFactor, ctx->view.viewSize[1] * ctx->backingScaleFactor},
-                .u_view_size =
-                    {ctx->view.viewSize[2] * ctx->backingScaleFactor, ctx->view.viewSize[3] * ctx->backingScaleFactor},
-                .u_sbo_offset = cmdText->text_buffer_start,
-            };
-            sg_apply_uniforms(UB_vs_text_uniforms, &SG_RANGE(vs_text_uniforms));
-
-            fs_text_singlechannel_t fs_text_singlechannel = {
-                .u_colour[0] = cmdText->colour_fill.rgba[0],
-                .u_colour[1] = cmdText->colour_fill.rgba[1],
-                .u_colour[2] = cmdText->colour_fill.rgba[2],
-                .u_colour[3] = cmdText->colour_fill.rgba[3],
-            };
-            sg_apply_uniforms(UB_fs_text_singlechannel, &SG_RANGE(fs_text_singlechannel));
-
-            int N_draws = cmdText->text_buffer_end - cmdText->text_buffer_start;
-            sg_draw(0, 6 * N_draws, 1);
+            sgnvg__renderText(ctx, cmd->payload.text);
             break;
-        }
         case SGNVG_CMD_IMAGE_FX:
         {
             SGNVGcommandImageFX* cmdfx = cmd->payload.fx;
@@ -4736,35 +4738,6 @@ int snvg_consume_commands(NVGcontext* ctx, SGNVGcommand* cmd)
 
 void nvgEndFrame(NVGcontext* ctx)
 {
-    // if (ctx->fontImageIdx != 0)
-    // {
-    //     int fontImage                      = ctx->fontImages[ctx->fontImageIdx];
-    //     ctx->fontImages[ctx->fontImageIdx] = 0;
-    //     int i, j, iw, ih;
-    //     // delete images that smaller than current one
-    //     if (fontImage == 0)
-    //         return;
-    //     nvgGetImageSize(ctx, fontImage, &iw, &ih);
-    //     for (i = j = 0; i < ctx->fontImageIdx; i++)
-    //     {
-    //         if (ctx->fontImages[i] != 0)
-    //         {
-    //             int nw, nh;
-    //             int image          = ctx->fontImages[i];
-    //             ctx->fontImages[i] = 0;
-    //             nvgGetImageSize(ctx, image, &nw, &nh);
-    //             if (nw < iw || nh < ih)
-    //                 nvgDeleteImage(ctx, image);
-    //             else
-    //                 ctx->fontImages[j++] = image;
-    //         }
-    //     }
-    //     // make current font image to first
-    //     ctx->fontImages[j] = ctx->fontImages[0];
-    //     ctx->fontImages[0] = fontImage;
-    //     ctx->fontImageIdx  = 0;
-    // }
-
     size_t num_atlases = xarr_len(ctx->glyph_atlases);
     for (int i = 0; i < num_atlases; i++)
     {
@@ -5254,68 +5227,6 @@ void nvgStroke(NVGcontext* ctx, float stroke_width)
         ctx->frame_stats.strokeTriCount += path->nstroke - 2;
         ctx->frame_stats.drawCallCount++;
     }
-}
-
-void nvg__renderText(NVGcontext* ctx, NVGvertex* verts, int nverts)
-{
-    NVG_ASSERT(false); // TODO
-    /*
-    NVGstate* state = &ctx->state;
-    NVGpaint  paint = state->paint;
-
-    // Render triangles.
-    SGNVGtexture* tex = sgnvg__findTexture(ctx, ctx->fontImages[ctx->fontImageIdx]);
-    NVG_ASSERT(tex);
-    if (tex)
-        paint.texview = tex->texview;
-
-    SGNVGcall*         call = NULL;
-    SGNVGfragUniforms* frag = NULL;
-
-    // Looks like you forgot to call snvg_command_draw_nvg() before issuing nvgFill()/nvgStroke()/nvgText() commands!
-    // NVG_ASSERT(ctx->current_nvg_draw != NULL); // TODO: remove?
-    if (ctx->current_nvg_draw == NULL)
-        snvg_command_draw_nvg(ctx, NVG_LABEL("nvg__renderText"));
-
-    call = linked_arena_alloc_clear(ctx->frame_arena, sizeof(*call));
-
-    if (call == NULL)
-        return;
-
-    call->type      = SGNVG_TRIANGLES;
-    call->texview   = paint.texview;
-    call->smp       = ctx->sampler_linear;
-    call->blendFunc = sgnvg__blendCompositeOperation(state->compositeOperation);
-
-    int offset, ioffset;
-    offset = sgnvg__allocVerts(ctx, nverts);
-    if (offset == -1)
-        return;
-    ioffset = sgnvg__allocIndexes(ctx, nverts);
-    if (ioffset == -1)
-        return;
-
-    // Allocate vertices for all the paths.
-    call->triangleOffset = ioffset;
-    call->triangleCount  = nverts;
-    memcpy(&ctx->verts[offset], verts, sizeof(NVGvertex) * nverts);
-    for (int i = 0; i < nverts; i++)
-        ctx->indexes[ioffset + i] = offset + i;
-
-    // Fill shader
-    frag = linked_arena_alloc_clear(ctx->frame_arena, sizeof(*frag));
-    if (frag == NULL)
-        return;
-    call->uniforms = frag;
-    sgnvg__convertPaint(ctx, frag, &paint, &state->scissor, 1.0f, ctx->fringeWidth, -1.0f);
-    frag->type = NSVG_SHADER_IMG;
-
-    // Success
-    sgnvg__addCall(ctx, call);
-
-    ctx->frame_stats.drawCallCount++;
-    ctx->frame_stats.textTriCount += nverts / 3;
-    */
 }
 
 // Source: https://github.com/floooh/sokol/issues/102
