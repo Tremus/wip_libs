@@ -273,8 +273,6 @@ void main(void) {
 
 #define NVG_KAPPA90 0.5522847493f // Length proportional to radius of a cubic bezier handle for 90deg arcs.
 
-#define NVG_ARRLEN(arr) (sizeof(arr) / sizeof(0 [arr]))
-
 #define NVG_ASSERT_GOTO(cond, label)                                                                                   \
     NVG_ASSERT(cond);                                                                                                  \
     if (!(cond))                                                                                                       \
@@ -1075,7 +1073,7 @@ static float nvg__distPtSeg(float x, float y, float px, float py, float qx, floa
     return dx * dx + dy * dy;
 }
 
-static void nvg__appendCommands(NVGcontext* ctx, float* vals, int nvals)
+void nvg__appendCommands(NVGcontext* ctx, float* vals, int nvals)
 {
     NVGstate* state = &ctx->state;
     int       i;
@@ -2147,24 +2145,6 @@ void nvgBeginPath(NVGcontext* ctx)
     ctx->ncommands     = 0;
     ctx->cache.npoints = 0;
     ctx->cache.npaths  = 0;
-}
-
-void nvgMoveTo(NVGcontext* ctx, float x, float y)
-{
-    float vals[] = {NVG_MOVETO, x, y};
-    nvg__appendCommands(ctx, vals, NVG_ARRLEN(vals));
-}
-
-void nvgLineTo(NVGcontext* ctx, float x, float y)
-{
-    float vals[] = {NVG_LINETO, x, y};
-    nvg__appendCommands(ctx, vals, NVG_ARRLEN(vals));
-}
-
-void nvgBezierTo(NVGcontext* ctx, float c1x, float c1y, float c2x, float c2y, float x, float y)
-{
-    float vals[] = {NVG_BEZIERTO, c1x, c1y, c2x, c2y, x, y};
-    nvg__appendCommands(ctx, vals, NVG_ARRLEN(vals));
 }
 
 void nvgQuadTo(NVGcontext* ctx, float cx, float cy, float x, float y)

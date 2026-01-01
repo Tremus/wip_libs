@@ -183,6 +183,8 @@ extern "C" {
 #define NVG_LABEL(...) 0
 #endif
 
+#define NVG_ARRLEN(arr) (sizeof(arr) / sizeof(0 [arr]))
+
 #if !defined(NVG_FONT_STB_TRUETYPE) && !defined(NVG_FONT_FREETYPE_SINGLECHANNEL) &&                                    \
     !defined(NVG_FONT_FREETYPE_MULTICHANNEL)
 // #define NVG_FONT_STB_TRUETYPE
@@ -1220,14 +1222,28 @@ void nvgResetScissor(NVGcontext* ctx);
 // Clears the current path and sub-paths.
 void nvgBeginPath(NVGcontext* ctx);
 
+void nvg__appendCommands(NVGcontext* ctx, float* vals, int nvals);
+
 // Starts new sub-path with specified point as first point.
-void nvgMoveTo(NVGcontext* ctx, float x, float y);
+static void nvgMoveTo(NVGcontext* ctx, float x, float y)
+{
+    float vals[] = {NVG_MOVETO, x, y};
+    nvg__appendCommands(ctx, vals, NVG_ARRLEN(vals));
+}
 
 // Adds line segment from the last point in the path to the specified point.
-void nvgLineTo(NVGcontext* ctx, float x, float y);
+static void nvgLineTo(NVGcontext* ctx, float x, float y)
+{
+    float vals[] = {NVG_LINETO, x, y};
+    nvg__appendCommands(ctx, vals, NVG_ARRLEN(vals));
+}
 
 // Adds cubic bezier segment from last point in the path via two control points to the specified point.
-void nvgBezierTo(NVGcontext* ctx, float c1x, float c1y, float c2x, float c2y, float x, float y);
+static void nvgBezierTo(NVGcontext* ctx, float c1x, float c1y, float c2x, float c2y, float x, float y)
+{
+    float vals[] = {NVG_BEZIERTO, c1x, c1y, c2x, c2y, x, y};
+    nvg__appendCommands(ctx, vals, NVG_ARRLEN(vals));
+}
 
 // Adds quadratic bezier segment from last point in the path via a control point to the specified point.
 void nvgQuadTo(NVGcontext* ctx, float cx, float cy, float x, float y);
