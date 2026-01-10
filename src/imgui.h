@@ -330,10 +330,11 @@ unsigned _imgui_get_events(imgui_context* ctx, unsigned uid, bool hover, bool mo
     mouse_enter      &= (not_dragging_anything || will_release_another_widget_from_drag);
     if (mouse_enter)
     {
-        events                   |= IMGUI_EVENT_MOUSE_ENTER;
-        ctx->frame_id_mouse_over  = frame_id;
-        ctx->uid_mouse_over       = uid;
+        events              |= IMGUI_EVENT_MOUSE_ENTER;
+        ctx->uid_mouse_over  = uid;
     }
+    if (ctx->uid_mouse_over == uid)
+        ctx->frame_id_mouse_over = frame_id;
 
     const bool has_had_hover_stolen = ctx->uid_mouse_hold > 0 && ctx->uid_mouse_hold != uid &&
                                       ctx->frame_id_mouse_over > 0 && ctx->frame_id_mouse_over < frame_id;
