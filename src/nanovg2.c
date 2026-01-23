@@ -241,6 +241,7 @@ void main(void) {
 #include <stdlib.h>
 
 #include <kb_text_shape.h>
+#include <utf8.h>
 #include <xhl/array.h>
 #include <xhl/files.h>
 #include <xhl/maths.h>
@@ -2970,7 +2971,7 @@ int nvg__renderGlyph(TextLayer* ctx, uint32_t glyph_index, float font_size)
 // Get cached rect. Rasters the rect to an atlas if not already cached
 // TODO: also compare font id
 // TODO: use fallback fonts. This may require accepting utf32 codepoints to detect language
-const NVGatlasRect* nvg__getGlyph(NVGcontext* ctx, uint32_t glyph_index, float font_size)
+NVGatlasRect nvg__getGlyph(NVGcontext* ctx, uint32_t glyph_index, float font_size)
 {
     const int num_rects = xarr_len(ctx->rects);
 
@@ -2982,7 +2983,7 @@ const NVGatlasRect* nvg__getGlyph(NVGcontext* ctx, uint32_t glyph_index, float f
         {
             NVGatlasRect* lmao = ctx->rects + j;
             xassert(lmao->x + lmao->w < NVG_ATLAS_WIDTH);
-            return lmao;
+            return *lmao;
         }
     }
 
@@ -2992,14 +2993,14 @@ const NVGatlasRect* nvg__getGlyph(NVGcontext* ctx, uint32_t glyph_index, float f
         xassert(num_rects + 1 == xarr_len(ctx->rects));
         NVGatlasRect* lmao = ctx->rects + num_rects;
         xassert(lmao->x + lmao->w < NVG_ATLAS_WIDTH);
-        return lmao;
+        return *lmao;
     }
 
     // Note: this stub has a texture view id of 0
     // sokol_gfx should assert in debug mode when trying to bind a texture view with an id of 0
     // In release it should skip all draws using that view. This is our desired behaviour
     static const NVGatlasRect stub_rect = {0};
-    return &stub_rect;
+    return stub_rect;
 }
 
 bool nvg__pushGlyph(NVGcontext* ctx, int pen_x, int pen_y, const NVGatlasRect* rect)
@@ -3184,9 +3185,9 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
                 break;
             default:
             {
-                const NVGatlasRect* rect             = nvg__getGlyph(ctx, Glyph->Id, font_size);
-                bool                add_to_metadata  = layout->num_glyphs < layout->cap_glyphs;
-                add_to_metadata                     &= rect->img_view.id != 0;
+                const NVGatlasRect rect             = nvg__getGlyph(ctx, Glyph->Id, font_size);
+                bool               add_to_metadata  = layout->num_glyphs < layout->cap_glyphs;
+                add_to_metadata                    &= rect.img_view.id != 0;
 
                 // TODO: handle word breaking here
 
@@ -3203,14 +3204,14 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
                     xassert(glyph_px_x >= 0);
                     xassert(glyph_px_y >= 0);
 
-                    int glyph_ymax = rect->bearing_y;
-                    int glyph_ymin = glyph_ymax - rect->h;
+                    int glyph_ymax = rect.bearing_y;
+                    int glyph_ymin = glyph_ymax - rect.h;
 
                     line_ymax = xm_maxi(glyph_ymax, line_ymax);
                     line_ymin = xm_mini(glyph_ymin, line_ymin);
-                    line_xmax = xm_maxi(glyph_px_x, rect->w);
+                    line_xmax = xm_maxi(glyph_px_x, rect.w);
 
-                    glyphs[layout->num_glyphs++] = (NVGglyphPosition2){.x = glyph_px_x, .y = glyph_px_y, .rect = *rect};
+                    glyphs[layout->num_glyphs++] = (NVGglyphPosition2){.x = glyph_px_x, .y = glyph_px_y, .rect = rect};
                 }
                 break;
             }
@@ -3232,36 +3233,6 @@ nvgMakeLayout(NVGcontext* ctx, const char* text_start, const char* text_end, flo
     NVG_ASSERT(rows[0].begin_idx < rows[0].end_idx);
 
     return layout;
-}
-
-// Source: https://github.com/sheredom/utf8.h
-char* utf8codepoint(const char* str, int* out_codepoint)
-{
-    if (0xf0 == (0xf8 & str[0]))
-    {
-        /* 4 byte utf8 codepoint */
-        *out_codepoint  = ((0x07 & str[0]) << 18) | ((0x3f & str[1]) << 12) | ((0x3f & str[2]) << 6) | (0x3f & str[3]);
-        str            += 4;
-    }
-    else if (0xe0 == (0xf0 & str[0]))
-    {
-        /* 3 byte utf8 codepoint */
-        *out_codepoint  = ((0x0f & str[0]) << 12) | ((0x3f & str[1]) << 6) | (0x3f & str[2]);
-        str            += 3;
-    }
-    else if (0xc0 == (0xe0 & str[0]))
-    {
-        /* 2 byte utf8 codepoint */
-        *out_codepoint  = ((0x1f & str[0]) << 6) | (0x3f & str[1]);
-        str            += 2;
-    }
-    else
-    {
-        /* 1 byte utf8 codepoint otherwise */
-        *out_codepoint  = str[0];
-        str            += 1;
-    }
-    return (char*)str;
 }
 
 // Lazy and fast layout
@@ -3355,27 +3326,33 @@ nvgMakeLayoutFast(NVGcontext* ctx, const char* text_start, const char* text_end,
             unsigned glyph_idx = FT_Get_Char_Index(face, cp);
             xassert(glyph_idx != 0);
 
-            const NVGatlasRect* rect = nvg__getGlyph(ctx, glyph_idx, font_size);
+            NVGatlasRect rect = nvg__getGlyph(ctx, glyph_idx, font_size);
 
-            bool add_to_metadata  = layout->num_glyphs < layout->cap_glyphs;
-            add_to_metadata      &= rect->img_view.id != 0;
+            bool add_to_metadata = layout->num_glyphs < layout->cap_glyphs;
+
+            if (cp == 32) // space
+            {
+                rect.w         = space_advance >> 6;
+                rect.advance_x = space_advance;
+            }
 
             if (add_to_metadata)
             {
-                line_ymax = xm_maxi(line_ymax, rect->bearing_y);
-                line_ymin = xm_mini(line_ymin, rect->bearing_y - rect->h);
+                line_ymax = xm_maxi(line_ymax, rect.bearing_y);
+                line_ymin = xm_mini(line_ymin, rect.bearing_y - rect.h);
                 FT_Vector kerning;
                 FT_Get_Kerning(face, prev_glyph_idx, glyph_idx, FT_KERNING_DEFAULT, &kerning);
                 int glyph_px_x = (CursorX + kerning.x) >> 6;
                 int glyph_px_y = (CursorY + kerning.y) >> 6;
                 NVG_ASSERT(glyph_px_x >= 0);
 
-                line_xmax = nvg__maxi(line_xmax, glyph_px_x + rect->w);
+                line_xmax = nvg__maxi(line_xmax, glyph_px_x + rect.w);
 
-                glyphs[layout->num_glyphs++] = (NVGglyphPosition2){.x = glyph_px_x, .y = glyph_px_y, .rect = *rect};
+                glyphs[layout->num_glyphs++] = (NVGglyphPosition2){.x = glyph_px_x, .y = glyph_px_y, .rect = rect};
             }
+            xassert(rect.advance_x > 0);
 
-            CursorX        += rect->advance_x ? rect->advance_x : space_advance;
+            CursorX        += rect.advance_x;
             prev_glyph_idx  = glyph_idx;
 
             if (cp == 32) // space
@@ -3431,7 +3408,7 @@ nvgMakeLayoutFast(NVGcontext* ctx, const char* text_start, const char* text_end,
 
                         // recalculate row stats
                         line_ymax = xm_maxi(line_ymax, gp->rect.bearing_y);
-                        line_ymin = xm_mini(line_ymin, gp->rect.bearing_y - rect->h);
+                        line_ymin = xm_mini(line_ymin, gp->rect.bearing_y - rect.h);
                         line_xmax = xm_maxi(line_xmax, gp->x + gp->rect.w);
                     }
                 }
@@ -3584,20 +3561,37 @@ void nvgDrawLayout(NVGcontext* ctx, const NVGtextLayout* layout, int x, int y)
     while (glyphs_consumed < glyph_pos_len)
     {
         NVG_ASSERT(++inf_loop_protection < 50);
-        sg_view target_atlas_view = search_glyphs[0].rect.img_view;
-        NVG_ASSERT(target_atlas_view.id != 0);
+        sg_view target_atlas_view = {0};
+        for (int i = 0; i < search_glyphs_len && target_atlas_view.id == 0; i++)
+        {
+            NVGglyphPosition2* gpos = &search_glyphs[i];
+            target_atlas_view       = gpos->rect.img_view;
+        }
+        if (target_atlas_view.id == 0)
+        {
+            // Failed to find nay glyphs to render. May be all spaces
+            break;
+        }
+
+        // sg_view target_atlas_view = search_glyphs[0].rect.img_view;
+        // NVG_ASSERT(target_atlas_view.id != 0);
 
         size_t text_buf_begin_len = ctx->text_buffer_len;
 
         // Iterate through remainder of array, putting every glyph with matching atlas into our batch
         for (int i = 0; i < search_glyphs_len; i++)
         {
-            NVGglyphPosition2* gpos        = &search_glyphs[i];
-            bool               should_push = target_atlas_view.id == gpos->rect.img_view.id;
+            NVGglyphPosition2* gpos = &search_glyphs[i];
+
+            bool should_push = target_atlas_view.id == gpos->rect.img_view.id;
 
             if (should_push)
             {
                 bool did_push = nvg__pushGlyph(ctx, x + gpos->x, y + gpos->y, &gpos->rect);
+                glyphs_consumed++;
+            }
+            else if (gpos->rect.img_view.id == 0)
+            {
                 glyphs_consumed++;
             }
             else

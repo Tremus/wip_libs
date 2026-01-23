@@ -3,6 +3,10 @@
 
 struct text_buffer
 {
+    // NOTE: coord_topleft coords could be compressed to uint16. To support signedness, apply +32767 delta building the SBO, then subtract -32767 here
+    // NOTE: tex atlas coords are 0-255, could be compressed to Unorm4x8
+    // NOTE: coord_bottomright is redundant, could be calculated using topleft + atlas_coords.zw * 255
+
     vec2 coord_topleft;
     vec2 coord_bottomright;
     uint tex_topleft;

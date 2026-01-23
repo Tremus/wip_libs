@@ -708,6 +708,7 @@ typedef union NVGatlasRectHeader
     {
         uint32_t glyph_index;
         // TODO: this could probably be packed into an integer. To support sizes like 12.25, multiply & divide by 4
+        // This could make room for font ids in the header
         float font_size;
     };
     uint64_t data;
@@ -717,13 +718,13 @@ typedef struct NVGatlasRect
 {
     union NVGatlasRectHeader header;
 
-    int16_t x, y, w, h;
-
-    int16_t bearing_x;
-    int16_t bearing_y;
+    uint8_t x, y, w, h;
 
     int16_t advance_x;
     int16_t advance_y;
+
+    int8_t bearing_x;
+    int8_t bearing_y;
 
     sg_view img_view;
 } NVGatlasRect;
