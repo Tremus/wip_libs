@@ -3274,8 +3274,8 @@ nvgMakeLayoutFast(NVGcontext* ctx, const char* text_start, const char* text_end,
     const int64_t space_advance = FT_MulFix(ctx->space_advance, m->x_scale) / 2;
 #endif
 #if defined(NVG_FONT_STB_TRUETYPE)
-    // TODO: stbtt
     xassert(false);
+#error "TODO: stbtt"
 #endif
 
     // Clang-cl makes INT64_MAX a negative integer if we aren't super explicit with types here
@@ -3965,15 +3965,15 @@ static SGNVGtexture* sgnvg__findTexture(NVGcontext* ctx, int id)
     return NULL;
 }
 
-static uint16_t sgnvg__getCombinedBlendNumber(sg_blend_state blend)
+static uint32_t sgnvg__getCombinedBlendNumber(sg_blend_state blend)
 {
 #if __STDC_VERSION__ >= 201112L
-    _Static_assert(_SG_BLENDFACTOR_NUM <= 17, "too many blend factors for 16-bit blend number");
+    _Static_assert(_SG_BLENDFACTOR_NUM <= 33, "too many blend factors for 16-bit blend number");
 #else
-    NVG_ASSERT(_SG_BLENDFACTOR_NUM <= 17); // can be a _Static_assert
+    NVG_ASSERT(_SG_BLENDFACTOR_NUM <= 33); // can be a _Static_assert
 #endif
-    return blend.src_factor_rgb | (blend.dst_factor_rgb << 4) | (blend.src_factor_alpha << 8) |
-           (blend.dst_factor_alpha << 12);
+    return blend.src_factor_rgb | (blend.dst_factor_rgb << 8) | (blend.src_factor_alpha << 16) |
+           (blend.dst_factor_alpha << 24);
 }
 
 static void sgnvg__initPipeline(
@@ -4032,7 +4032,7 @@ static bool sgnvg__pipelineTypeIsInUse(NVGcontext* ctx, enum SGNVGpipelineType t
     return false;
 }
 
-static int sgnvg__getIndexFromCache(NVGcontext* ctx, uint16_t blendNumber)
+static int sgnvg__getIndexFromCache(NVGcontext* ctx, uint32_t blendNumber)
 {
     uint16_t currentUse = ctx->pipelineCache.currentUse;
 
@@ -4604,13 +4604,24 @@ static void sgnvg__renderText(NVGcontext* ctx, SGNVGcommandText* cmdText)
     };
     sg_apply_uniforms(UB_vs_text_uniforms, &SG_RANGE(vs_text_uniforms));
 
-    fs_text_singlechannel_t fs_text_singlechannel = {
+#ifdef NVG_FONT_FREETYPE_SINGLECHANNEL
+    fs_text_singlechannel_uniforms_t fs_text_singlechannel = {
         .u_colour[0] = cmdText->colour_fill.rgba[0],
         .u_colour[1] = cmdText->colour_fill.rgba[1],
         .u_colour[2] = cmdText->colour_fill.rgba[2],
         .u_colour[3] = cmdText->colour_fill.rgba[3],
     };
-    sg_apply_uniforms(UB_fs_text_singlechannel, &SG_RANGE(fs_text_singlechannel));
+    sg_apply_uniforms(UB_fs_text_singlechannel_uniforms, &SG_RANGE(fs_text_singlechannel));
+#endif
+#ifdef NVG_FONT_FREETYPE_MULTICHANNEL
+    fs_text_multichannel_uniforms_t fs_text_multichannel = {
+        .u_colour[0] = cmdText->colour_fill.rgba[0],
+        .u_colour[1] = cmdText->colour_fill.rgba[1],
+        .u_colour[2] = cmdText->colour_fill.rgba[2],
+        .u_colour[3] = cmdText->colour_fill.rgba[3],
+    };
+    sg_apply_uniforms(UB_fs_text_multichannel_uniforms, &SG_RANGE(fs_text_multichannel));
+#endif
 
     int N_draws = cmdText->text_buffer_end - cmdText->text_buffer_start;
     sg_draw(0, 6 * N_draws, 1);
@@ -5911,7 +5922,7 @@ NVGcontext* nvgCreateContext(int flags)
     });
     xassert(ctx->text_sbv.id);
 
-#if defined(RASTER_FREETYPE_MULTICHANNEL)
+#if defined(NVG_FONT_FREETYPE_MULTICHANNEL)
     sg_shader text_shd = sg_make_shader(text_multichannel_shader_desc(sg_query_backend()));
 #else
     sg_shader text_shd = sg_make_shader(text_singlechannel_shader_desc(sg_query_backend()));
@@ -5919,15 +5930,16 @@ NVGcontext* nvgCreateContext(int flags)
 
     sg_pipeline_desc pip_desc = {.shader = text_shd, .label = "img-pipeline"};
 
-#if defined(RASTER_FREETYPE_MULTICHANNEL)
+#if defined(NVG_FONT_FREETYPE_MULTICHANNEL)
     pip_desc.colors[0] = (sg_color_target_state){
         .write_mask = SG_COLORMASK_RGB,
         .blend      = {
-                 .enabled        = true,
-                 .src_factor_rgb = SG_BLENDFACTOR_ONE,
-                 .dst_factor_rgb = SG_BLENDFACTOR_ONE_MINUS_SRC_COLOR,
+                 .enabled = true,
+            //  .src_factor_rgb = SG_BLENDFACTOR_SRC1_COLOR, // use if no premultiplied alpha
+                 .src_factor_rgb = SG_BLENDFACTOR_ONE, // use if premultiplied alpha
+                 .dst_factor_rgb = SG_BLENDFACTOR_ONE_MINUS_SRC1_COLOR,
         }};
-#else
+#elif defined(NVG_FONT_FREETYPE_SINGLECHANNEL)
     pip_desc.colors[0] = (sg_color_target_state){
         .write_mask = SG_COLORMASK_RGBA,
         .blend      = {

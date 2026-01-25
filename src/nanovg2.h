@@ -188,9 +188,12 @@ extern "C" {
 #if !defined(NVG_FONT_STB_TRUETYPE) && !defined(NVG_FONT_FREETYPE_SINGLECHANNEL) &&                                    \
     !defined(NVG_FONT_FREETYPE_MULTICHANNEL)
 // #define NVG_FONT_STB_TRUETYPE
-// TODO: fix blending in multichannel
-// #define NVG_FONT_FREETYPE_MULTICHANNEL
+#ifdef __APPLE__
 #define NVG_FONT_FREETYPE_SINGLECHANNEL
+#else
+#define NVG_FONT_FREETYPE_MULTICHANNEL
+#endif
+
 #endif
 #if defined(NVG_FONT_FREETYPE_SINGLECHANNEL) || defined(NVG_FONT_FREETYPE_MULTICHANNEL)
 #define NVG_FONT_FREETYPE
@@ -569,9 +572,9 @@ typedef struct SGNVGfragUniforms
 
 typedef struct SGNVGpipelineCacheKey
 {
-    uint16_t blend;   // cached as `src_factor_rgb | (dst_factor_rgb << 4) | (src_factor_alpha << 8) | (dst_factor_alpha
-                      // << 12)`
-    uint16_t lastUse; // updated on each read
+    uint32_t blend; // cached as `src_factor_rgb | (dst_factor_rgb << 8) | (src_factor_alpha << 16) | (dst_factor_alpha
+                    // << 24)`
+    uint32_t lastUse; // updated on each read
 } SGNVGpipelineCacheKey;
 
 enum SGNVGpipelineType
@@ -598,7 +601,7 @@ typedef struct SGNVGpipelineCache
     SGNVGpipelineCacheKey keys[NANOVG_SG_PIPELINE_CACHE_SIZE];
     sg_pipeline           pipelines[NANOVG_SG_PIPELINE_CACHE_SIZE][SGNVG_PIP_NUM_];
     uint8_t               pipelinesActive[NANOVG_SG_PIPELINE_CACHE_SIZE];
-    uint16_t              currentUse; // incremented on each overwrite
+    uint32_t              currentUse; // incremented on each overwrite
 } SGNVGpipelineCache;
 
 typedef struct SGNVGcall

@@ -64,7 +64,7 @@ void main() {
 layout(binding=1) uniform texture2D text_tex;
 layout(binding=0) uniform sampler text_smp;
 
-layout(binding=1) uniform fs_text_singlechannel {
+layout(binding=1) uniform fs_text_singlechannel_uniforms {
     vec4 u_colour;
 };
 
@@ -83,10 +83,18 @@ layout(binding=1) uniform texture2D text_tex;
 layout(binding=0) uniform sampler text_smp;
 
 in vec2 texcoord;
-out vec4 frag_colour;
+layout(location=0, index=0) out vec4 frag_colour;
+layout(location=0, index=1) out vec4 blend_weights;
+
+layout(binding=1) uniform fs_text_multichannel_uniforms {
+    vec4 u_colour;
+};
 
 void main() {
-    frag_colour = texture(sampler2D(text_tex, text_smp), texcoord);
+    vec3 pixel_coverages = texture(sampler2D(text_tex, text_smp), texcoord).rgb;
+
+    frag_colour = u_colour * vec4(pixel_coverages, 1);
+	blend_weights = vec4(u_colour.a * pixel_coverages, u_colour.a);
 }
 @end
 
