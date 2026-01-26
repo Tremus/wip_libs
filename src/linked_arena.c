@@ -174,7 +174,7 @@ void linked_arena_prune(LinkedArena* arena)
 
 void* linked_arena_get_top(const LinkedArena* arena)
 {
-    char* top = NULL;
+    char* top = (char*)(arena + 1);
 
     while (arena)
     {
