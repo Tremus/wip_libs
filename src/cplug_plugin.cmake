@@ -47,7 +47,7 @@ endif()
 if (WIN32)
     # Windows paths are complicated
     string(REPLACE "/" "\\\\" SRC_DIR ${SRC_DIR})
-    string(REPLACE "/" "\\\\" SRC_DIR ${SRC_DIR})
+    string(REPLACE "/" "\\\\" BIN_DIR ${BIN_DIR})
 endif()
 
 # https://clang.llvm.org/docs/ClangCommandLineReference.html
