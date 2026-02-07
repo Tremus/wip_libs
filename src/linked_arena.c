@@ -101,6 +101,8 @@ void* linked_arena_alloc_aligned(LinkedArena* arena, size_t size, size_t alignme
         }
         else
         {
+            arena->size = arena->capacity; // max out arena so new smaller allocs are always from the tail
+
             if (arena->next == NULL) // Reached the end of the list
             {
                 size_t alloc_size = size > arena->capacity ? (size + sizeof(LinkedArena)) : arena->capacity;
