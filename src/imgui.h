@@ -336,11 +336,14 @@ unsigned _imgui_get_events(imgui_context* ctx, unsigned uid, bool hover, bool mo
     if (ctx->uid_mouse_over == uid)
         ctx->frame_id_mouse_over = frame_id;
 
-    const bool has_had_hover_stolen = ctx->uid_mouse_hold > 0 && ctx->uid_mouse_hold != uid &&
-                                      ctx->frame_id_mouse_over > 0 && ctx->frame_id_mouse_over < frame_id;
+    const bool was_hovering_last_frame = ctx->uid_last_frame_mouse_over == uid;
+    bool has_had_hover_stolen = ctx->uid_mouse_hold > 0 && ctx->uid_mouse_hold != uid && ctx->frame_id_mouse_over > 0 &&
+                                ctx->frame_id_mouse_over < frame_id;
+    has_had_hover_stolen |= was_hovering_last_frame && ctx->uid_mouse_over != uid;
+
     bool is_exiting  = !hover || has_had_hover_stolen;
-    is_exiting      &= ctx->uid_last_frame_mouse_over == uid; // was hovering
-    is_exiting      &= ctx->uid_mouse_hold != uid;            // no mouse hold
+    is_exiting      &= was_hovering_last_frame;
+    is_exiting      &= ctx->uid_mouse_hold != uid; // no mouse hold
 
     if (is_exiting)
     {
