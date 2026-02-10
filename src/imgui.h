@@ -91,6 +91,17 @@ enum // Event flags
     // TODO: keyboard events
 };
 
+// Handling mouse events at draw time goes against the OS's event consumption model. Things like dragging a file out of
+// a window on macOS can only be done in response to a mouse down event. So we need to support callbacks for the few
+// things that require it.
+typedef bool (*imgui_mousedown_callback_t)(void* uptr, unsigned id);
+typedef struct ImguiMouseDownCallback
+{
+    unsigned                   uid;
+    void*                      uptr;
+    imgui_mousedown_callback_t callback;
+} ImguiMouseDownCallback;
+
 // There is no official init function for this object. Just set the whole thing to 0.
 // If your app responds to resizes at draw time, consider adding 'frame.id |= 1 << PW_EVENT_RESIZE;' on init.
 typedef struct imgui_context
@@ -172,6 +183,9 @@ typedef struct imgui_context
         imgui_pt delta_mouse_move;
     } frame;
 
+    unsigned               mouse_down_callbacks_len;
+    ImguiMouseDownCallback mouse_down_callbacks[32];
+
 #ifndef NDEBUG
     struct
     {
@@ -183,13 +197,16 @@ typedef struct imgui_context
 } imgui_context;
 
 struct PWEvent;
-void imgui_send_event(imgui_context* ctx, const struct PWEvent* e);
+bool imgui_send_event(imgui_context* ctx, const struct PWEvent* e);
 void imgui_begin_frame(imgui_context* ctx);
 void imgui_end_frame(imgui_context* ctx);
 
 unsigned imgui_get_events_circle(imgui_context* ctx, unsigned uid, imgui_pt pt, float radius);
 unsigned imgui_get_events_rect(imgui_context* ctx, unsigned uid, const imgui_rect* rect);
 void     imgui_clear_widget(imgui_context* ctx);
+
+// If your widgets REQUIRE mouse down callbacks at event time, call this every frame
+void imgui_push_mousedown_callback(imgui_context* ctx, ImguiMouseDownCallback mdc);
 
 typedef enum ImguiDragType
 {
@@ -605,6 +622,8 @@ void imgui_begin_frame(imgui_context* ctx)
 
     ctx->frame.delta_mouse_move.x = ctx->last_frame_mouse_move.x - ctx->pos_mouse_move.x;
     ctx->frame.delta_mouse_move.y = ctx->last_frame_mouse_move.y - ctx->pos_mouse_move.y;
+
+    ctx->mouse_down_callbacks_len = 0;
 }
 
 // Call at the end of every frame after all events have been processed
@@ -635,7 +654,23 @@ void imgui_end_frame(imgui_context* ctx)
     memset(&ctx->frame, 0, sizeof(ctx->frame));
 }
 
-void imgui_send_event(imgui_context* ctx, const PWEvent* e)
+void imgui_push_mousedown_callback(imgui_context* ctx, ImguiMouseDownCallback mdc)
+{
+    PW_ASSERT(mdc.uid);
+    PW_ASSERT(mdc.callback);
+    if (mdc.uid == 0 || mdc.callback == 0)
+        return;
+    // Oh dear, did you forget to call imgui_begin_frame()?
+    PW_ASSERT(ctx->mouse_down_callbacks_len < 10000);
+
+    const unsigned cap = sizeof(ctx->mouse_down_callbacks) / sizeof(ctx->mouse_down_callbacks[0]);
+    if (ctx->mouse_down_callbacks_len < cap)
+    {
+        ctx->mouse_down_callbacks[ctx->mouse_down_callbacks_len++] = mdc;
+    }
+}
+
+bool imgui_send_event(imgui_context* ctx, const PWEvent* e)
 {
     ctx->num_duplicate_backbuffers  = 0;
     ctx->frame.events              |= 1 << e->type;
@@ -729,6 +764,22 @@ void imgui_send_event(imgui_context* ctx, const PWEvent* e)
 
                 ctx->left_click_counter++;
                 ctx->last_left_click_time = e->mouse.time_ms;
+
+                if (ctx->uid_mouse_hold)
+                {
+                    for (int i = 0; i < ctx->mouse_down_callbacks_len; i++)
+                    {
+                        const ImguiMouseDownCallback* mdc = &ctx->mouse_down_callbacks[i];
+                        if (ctx->uid_mouse_hold == mdc->uid)
+                        {
+                            if (mdc->callback)
+                            {
+                                mdc->callback(mdc->uptr, mdc->uid);
+                            }
+                            break;
+                        }
+                    }
+                }
             }
         }
 
@@ -783,5 +834,7 @@ void imgui_send_event(imgui_context* ctx, const PWEvent* e)
     case PW_EVENT_FILE_EXIT:
         break;
     }
+
+    return false;
 }
 #endif // IMGUI_IMPL
