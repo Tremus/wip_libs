@@ -1,5 +1,5 @@
 #pragma once
-#include <xhl/array.h>
+#include <xhl/array2.h>
 
 typedef struct Stringpool
 {
