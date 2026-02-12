@@ -164,6 +164,9 @@ typedef struct imgui_context
         enum ImguiMouseButtonType type_mouse_down; // Needed in case multiple clicks are sent in between frames
         enum ImguiMouseButtonType type_mouse_up;
 
+        // Tracks if the widget from last frame is still in use
+        unsigned uid_mouse_over_clone;
+
         unsigned uid_mouse_down;
         unsigned uid_mouse_up;
 
@@ -352,6 +355,11 @@ unsigned _imgui_get_events(imgui_context* ctx, unsigned uid, bool hover, bool mo
     }
     if (ctx->uid_mouse_over == uid)
         ctx->frame_id_mouse_over = frame_id;
+
+    bool frame_mouse_over  = hover;
+    frame_mouse_over      &= ctx->frame.uid_mouse_over_clone == 0;
+    if (frame_mouse_over)
+        ctx->frame.uid_mouse_over_clone = uid;
 
     const bool was_hovering_last_frame = ctx->uid_last_frame_mouse_over == uid;
     bool has_had_hover_stolen = ctx->uid_mouse_hold > 0 && ctx->uid_mouse_hold != uid && ctx->frame_id_mouse_over > 0 &&
@@ -650,6 +658,12 @@ void imgui_end_frame(imgui_context* ctx)
     ctx->uid_last_frame_drag_over  = ctx->uid_drag_over;
 
     ctx->last_frame_mouse_move = ctx->pos_mouse_move;
+
+    if (ctx->frame.uid_mouse_over_clone && ctx->frame.uid_mouse_over_clone != ctx->uid_mouse_over)
+    {
+        ctx->uid_mouse_over      = 0;
+        ctx->frame_id_mouse_over = 0;
+    }
 
     memset(&ctx->frame, 0, sizeof(ctx->frame));
 }
