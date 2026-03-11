@@ -111,7 +111,7 @@ if (CMAKE_BUILD_TYPE MATCHES Release)
     set(CMAKE_OBJC_VISIBILITY_PRESET hidden)
     set(CMAKE_VISIBILITY_INLINES_HIDDEN YES)
     # Currently getting release mode bugs on MacOS & Windows...
-    # list(APPEND PLUGIN_OPTIONS -flto)
+    list(APPEND PLUGIN_OPTIONS -flto)
 endif()
 
 list(APPEND PLUGIN_DEFINITIONS
