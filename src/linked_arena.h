@@ -58,3 +58,6 @@ void* linked_arena_get_top(const LinkedArena* arena);
 
 #define LINKED_ARENA_LEAK_DETECT_BEGIN(arena) LINKED_ARENA_TAGGED_LEAK_DETECT_BEGIN(arena, _arena_top)
 #define LINKED_ARENA_LEAK_DETECT_END(arena)   LINKED_ARENA_TAGGED_LEAK_DETECT_END(arena, _arena_top)
+
+#define LINKED_ARENA_AUTORELEASE_BEGIN(arena, tag) void* tag = linked_arena_get_top(arena);
+#define LINKED_ARENA_AUTORELEASE_END(arena, tag)   linked_arena_release(arena, tag);
