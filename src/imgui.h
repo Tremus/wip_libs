@@ -180,7 +180,7 @@ typedef struct imgui_context
         unsigned modifiers_mouse_wheel; // This probably needs to have its own way to handle ownership of events
         unsigned modifiers_touchpad;
 
-        imgui_pt delta_touchpad;
+        imgui_pt delta_scroll;
         int      delta_mouse_wheel;
 
         imgui_pt delta_mouse_move;
@@ -386,7 +386,7 @@ unsigned _imgui_get_events(imgui_context* ctx, unsigned uid, bool hover, bool mo
         events |= IMGUI_EVENT_MOUSE_MOVE;
 
     // Mouse wheel & touchpad
-    if (ctx->uid_mouse_over == uid && ctx->frame.delta_mouse_wheel)
+    if (ctx->uid_mouse_over == uid && (ctx->frame.events & (1 << PW_EVENT_MOUSE_SCROLL_WHEEL)))
     {
         events |= IMGUI_EVENT_MOUSE_WHEEL;
     }
@@ -726,14 +726,25 @@ bool imgui_send_event(imgui_context* ctx, const PWEvent* e)
         ctx->frame.modifiers_mouse_move |= e->mouse.modifiers;
         break;
     case PW_EVENT_MOUSE_SCROLL_WHEEL:
-        ctx->frame.delta_mouse_wheel     += (int)(e->mouse.y / 120.0f);
+        ctx->frame.delta_mouse_wheel += (int)(e->mouse.y / 120.0f);
+        // NOTE: When using the mouse wheel on Windows, the OS will always give you deltas as a multiple of 120.
+        // However it is possible to receive smaller fractional values. The only example of this I've come across is
+        // when using my MacBooks touch pad while using Parsec (remote desktop app) to control my Windows machine.
+        // Apparently trackpads exist that also work on Windows.
+        // For anything that response to the mouse wheel, first respond to delta_mouse_wheel, but use delta_scroll as a
+        // fallback.
+        // For anything that needs to be scrolled, just use delta_scroll.y.
+        // The correct scroll delta for mouse wheels is debatable. YouTube running in Chrome will scroll by 100px.
+        // VSCode will scroll by 50px. We use 60px here because it feels fine and `e->mouse.y / 2.0f` looks neat. Feel
+        // free to calculate your own using delta_mouse_wheel
+        ctx->frame.delta_scroll.y        += e->mouse.y / 2.0f;
         ctx->frame.modifiers_mouse_wheel |= e->mouse.modifiers;
         break;
     case PW_EVENT_MOUSE_TOUCHPAD_BEGIN:
     case PW_EVENT_MOUSE_TOUCHPAD_MOVE:
     case PW_EVENT_MOUSE_TOUCHPAD_END:
-        ctx->frame.delta_touchpad.x   += e->mouse.x;
-        ctx->frame.delta_touchpad.y   += e->mouse.y;
+        ctx->frame.delta_scroll.x     += e->mouse.x;
+        ctx->frame.delta_scroll.y     += e->mouse.y;
         ctx->frame.modifiers_touchpad |= e->mouse.modifiers;
         break;
     case PW_EVENT_MOUSE_LEFT_DOWN:
