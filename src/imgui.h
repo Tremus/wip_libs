@@ -213,6 +213,12 @@ void imgui_push_mousedown_callback(imgui_context* ctx, ImguiMouseDownCallback md
 
 typedef enum ImguiDragType
 {
+    // Up to library to decide
+    IMGUI_DRAG_DEFAULT = 0,
+#ifndef _IMGUI_DRAG_DEFAULT
+#define _IMGUI_DRAG_DEFAULT IMGUI_DRAG_HORIZONTAL_VERTICAL
+#endif
+
     IMGUI_DRAG_HORIZONTAL = 1 << 0,
     IMGUI_DRAG_VERTICAL   = 1 << 1,
     IMGUI_DRAG_INVERTED_X = 1 << 2,
@@ -583,6 +589,11 @@ void imgui_drag_value(imgui_context* ctx, float* value, float vmin, float vmax, 
 
     ctx->mouse_last_drag.x = ctx->pos_mouse_move.x;
     ctx->mouse_last_drag.y = ctx->pos_mouse_move.y;
+
+    if (range_px == 0)
+        range_px = 250;
+    if (drag_type == 0)
+        drag_type = _IMGUI_DRAG_DEFAULT;
 
     if (drag_type & IMGUI_DRAG_INVERTED_X)
         delta_x = -delta_x;
