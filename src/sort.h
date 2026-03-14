@@ -80,10 +80,10 @@ static inline void xqsort_s(
     qsort_s(base, num_elements, size_elements, compare_func, ctx);
 #elif defined(__APPLE__)
     extern void qsort_r(
-        void*              _base,
-        unsigned long long _nel,
-        unsigned long long _width,
-        void*              _thunk,
+        void*         _base,
+        unsigned long _nel,
+        unsigned long _width,
+        void*         _thunk,
         int (*_compar)(void*, const void*, const void*));
     qsort_r(base, num_elements, size_elements, ctx, compare_func);
 #else
