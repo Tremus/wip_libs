@@ -165,10 +165,8 @@ void linked_arena_prune(LinkedArena* arena)
 
         if (n1 && n1->size == 0)
         {
-            arena->next = n1->next;
-
-            size_t alloc_size = n1->capacity + sizeof(LinkedArena);
-            xvfree(n1, alloc_size);
+            linked_arena_destroy(n1);
+            arena->next = NULL;
         }
         arena = arena->next;
     }
