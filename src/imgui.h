@@ -358,6 +358,7 @@ unsigned _imgui_get_events(imgui_context* ctx, unsigned uid, bool hover, bool mo
     {
         events              |= IMGUI_EVENT_MOUSE_ENTER;
         ctx->uid_mouse_over  = uid;
+        PW_ASSERT(ctx->uid_mouse_hold == 0);
     }
     if (ctx->uid_mouse_over == uid)
         ctx->frame_id_mouse_over = frame_id;
@@ -670,7 +671,7 @@ void imgui_end_frame(imgui_context* ctx)
 
     ctx->last_frame_mouse_move = ctx->pos_mouse_move;
 
-    if (ctx->frame.uid_mouse_over_clone && ctx->frame.uid_mouse_over_clone != ctx->uid_mouse_over)
+    if (ctx->frame.uid_mouse_over_clone && ctx->frame.uid_mouse_over_clone != ctx->uid_mouse_over && ctx->uid_drag == 0)
     {
         ctx->uid_mouse_over      = 0;
         ctx->frame_id_mouse_over = 0;
