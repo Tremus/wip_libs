@@ -496,7 +496,7 @@ unsigned _imgui_get_events(imgui_context* ctx, unsigned uid, bool hover, bool mo
         float distance_x = ctx->pos_mouse_down.x - ctx->pos_mouse_move.x;
         float distance_y = ctx->pos_mouse_down.y - ctx->pos_mouse_move.y;
         float distance_r = sqrtf(distance_x * distance_x + distance_y * distance_y);
-        if (distance_r > 5) // Drag threshold
+        if (distance_r > 2) // Drag threshold
         {
             PW_ASSERT(ctx->uid_drag != uid);
             events        |= IMGUI_EVENT_DRAG_BEGIN;
