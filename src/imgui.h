@@ -123,6 +123,10 @@ typedef struct imgui_context
     // Needed for tracking drags made by a specific mouse button
     enum ImguiMouseButtonType mouse_hold_type;
 
+    int        window_width;
+    int        window_height;
+    imgui_rect scissor;
+
     imgui_pt pos_mouse_down;
     imgui_pt pos_mouse_up;
     imgui_pt pos_mouse_move;
@@ -201,12 +205,18 @@ typedef struct imgui_context
 
 struct PWEvent;
 bool imgui_send_event(imgui_context* ctx, const struct PWEvent* e);
-void imgui_begin_frame(imgui_context* ctx);
+void imgui_begin_frame(imgui_context* ctx, int window_width, int window_height);
 void imgui_end_frame(imgui_context* ctx);
 
 unsigned imgui_get_events_circle(imgui_context* ctx, unsigned uid, imgui_pt pt, float radius);
 unsigned imgui_get_events_rect(imgui_context* ctx, unsigned uid, const imgui_rect* rect);
 void     imgui_clear_widget(imgui_context* ctx);
+
+static void imgui_set_scissor(imgui_context* ctx, imgui_rect scissor) { ctx->scissor = scissor; }
+static void imgui_clear_scissor(imgui_context* ctx)
+{
+    ctx->scissor = (imgui_rect){0, 0, ctx->window_width, ctx->window_height};
+}
 
 // If your widgets REQUIRE mouse down callbacks at event time, call this every frame
 void imgui_push_mousedown_callback(imgui_context* ctx, ImguiMouseDownCallback mdc);
@@ -568,17 +578,31 @@ unsigned _imgui_get_events(imgui_context* ctx, unsigned uid, bool hover, bool mo
 
 unsigned imgui_get_events_rect(imgui_context* ctx, unsigned uid, const imgui_rect* rect)
 {
-    bool hover = ctx->mouse_inside_window && imgui_hittest_rect(ctx->pos_mouse_move, rect);
+    bool hover = imgui_hittest_rect(ctx->pos_mouse_move, rect);
     bool down  = imgui_hittest_rect(ctx->pos_mouse_down, rect);
     bool up    = imgui_hittest_rect(ctx->pos_mouse_up, rect);
+
+    hover &= imgui_hittest_rect(ctx->pos_mouse_move, &ctx->scissor);
+    down  &= imgui_hittest_rect(ctx->pos_mouse_down, &ctx->scissor);
+    up    &= imgui_hittest_rect(ctx->pos_mouse_up, &ctx->scissor);
+
+    hover &= ctx->mouse_inside_window;
+
     return _imgui_get_events(ctx, uid, hover, down, up);
 }
 
 unsigned imgui_get_events_circle(imgui_context* ctx, unsigned uid, imgui_pt pt, float radius)
 {
-    bool hover = ctx->mouse_inside_window && imgui_hittest_circle(ctx->pos_mouse_move, pt, radius);
+    bool hover = imgui_hittest_circle(ctx->pos_mouse_move, pt, radius);
     bool down  = imgui_hittest_circle(ctx->pos_mouse_down, pt, radius);
     bool up    = imgui_hittest_circle(ctx->pos_mouse_up, pt, radius);
+
+    hover &= imgui_hittest_rect(ctx->pos_mouse_move, &ctx->scissor);
+    down  &= imgui_hittest_rect(ctx->pos_mouse_down, &ctx->scissor);
+    up    &= imgui_hittest_rect(ctx->pos_mouse_up, &ctx->scissor);
+
+    hover &= ctx->mouse_inside_window;
+
     return _imgui_get_events(ctx, uid, hover, down, up);
 }
 
@@ -634,7 +658,7 @@ void imgui_drag_value(imgui_context* ctx, float* value, float vmin, float vmax, 
     *value = next_value;
 }
 
-void imgui_begin_frame(imgui_context* ctx)
+void imgui_begin_frame(imgui_context* ctx, int window_width, int window_height)
 {
 #ifndef NDEBUG
     ctx->duplicate_uid_detector.length = 0;
@@ -644,6 +668,10 @@ void imgui_begin_frame(imgui_context* ctx)
     ctx->frame.delta_mouse_move.y = ctx->last_frame_mouse_move.y - ctx->pos_mouse_move.y;
 
     ctx->mouse_down_callbacks_len = 0;
+
+    ctx->window_width  = window_width;
+    ctx->window_height = window_height;
+    imgui_clear_scissor(ctx);
 }
 
 // Call at the end of every frame after all events have been processed
