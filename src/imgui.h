@@ -21,6 +21,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #include <math.h>
 #include <stdbool.h>
+#include <stdlib.h>
 
 #if defined(_MSC_VER)
 #define IM_ALIGN(a) __declspec(align(a))
