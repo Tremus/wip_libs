@@ -53,8 +53,8 @@ void* linked_arena_make_hint(LinkedArena* arena)
     void* hint = arena;
     if (arena)
     {
-        size_t offset  = arena->capacity + sizeof(LinkedArena);
-        hint          += offset;
+        size_t offset = arena->capacity + sizeof(LinkedArena);
+        hint          = (char*)hint + offset;
     }
     return hint;
 }
@@ -96,7 +96,7 @@ void* linked_arena_alloc_aligned(LinkedArena* arena, size_t size, size_t alignme
         if (size <= remaining)
         {
             ptr          = arena + 1;
-            ptr         += arena->size;
+            ptr          = (char*)ptr + arena->size;
             arena->size += size;
         }
         else
@@ -129,11 +129,11 @@ void linked_arena_release(LinkedArena* arena, const void* const ptr)
 {
     while (arena)
     {
-        void* start = arena + 1;
-        void* end   = start + arena->size;
-        if (ptr >= start && ptr < end)
+        char* start = (char*)(arena + 1);
+        char* end   = start + arena->size;
+        if ((char*)ptr >= start && (char*)ptr < end)
         {
-            size_t alloc_size = end - ptr;
+            size_t alloc_size = (size_t)(end - (char*)ptr);
             xassert(arena->size >= alloc_size);
             arena->size -= alloc_size;
 
@@ -174,17 +174,17 @@ void linked_arena_prune(LinkedArena* arena)
 
 void* linked_arena_get_top(const LinkedArena* arena)
 {
-    char* top = (char*)(arena + 1);
+    size_t top = (size_t)(arena + 1);
 
     while (arena)
     {
         if (arena->size)
         {
-            char* base = (char*)(arena + 1);
-            top        = base + arena->size;
+            size_t base = (size_t)(arena + 1);
+            top         = base + arena->size;
         }
         arena = arena->next;
     }
     xassert(top);
-    return top;
+    return (void*)top;
 }
