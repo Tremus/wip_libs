@@ -1188,8 +1188,7 @@ xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void*
                 // Server closed TLS connection. We may actually have all required data
                 // Note that you must guarantee this yourself by parsing the response and checking "Content-Length:"
                 // matches the actual content length
-                // XREQ_LOGERROR("[TLS] WARNING: Server closed the TLS connection.
-                // Remaining: %u\n", ctx->received);
+                // XREQ_LOGERROR("[TLS] WARNING: Server closed the TLS connection. Remaining: %u\n", ctx->received);
                 ctx->state = TLS_STATE_DISCONNECTED;
             }
             else if (sec == SEC_I_RENEGOTIATE)
@@ -1213,7 +1212,6 @@ xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void*
     }
 
     // After the server disconnects, there may be lots of remaining data to process
-    XREQ_ASSERT(ctx->received == 0);
     XREQ_LOGERROR("State %s", tls_state_string(ctx->state));
 
 disconnect:
