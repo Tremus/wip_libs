@@ -21,6 +21,16 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ===============================================================================
 
+WHAT THIS LIBRARY DOES DO:
+- Establishes a secure connection
+- Sends and receives data over that connection
+- Gives you a simple interface in which to do it
+WHAT THIS LIBRARY DOES NOT DO:
+- Validate all data has been received
+- Give you detailed errors why something failed (I'm working on it)
+
+I recommend parsing the headers to find "Content-Length" and seeing if that matches the returned data
+
 NOTE: The Windows implementation is a big refactor of the free library found here.
 https://github.com/RandyGaul/cute_headers/blob/71928ed90d7b9745bcc3320ab438cf4a0a021eaa/cute_tls.h
 
@@ -64,7 +74,17 @@ typedef int (*xreq_callback_t)(
     unsigned    size  // May be zero
 );
 
-void xrequest(
+typedef enum XRequestError
+{
+    XREQUEST_ERROR_NONE,           // Success :)
+    XREQUEST_ERROR_USER_CANCELLED, // You cancelled the request
+    XREQUEST_ERROR_CONNECTION_FAILED,
+    XREQUEST_ERROR_TIMEOUT,
+    XREQUEST_ERROR_UNKNOWN,
+    XREQUEST_ERROR_COUNT,
+} XRequestError;
+
+XRequestError xrequest(
     const char*     hostname, // eg. www.google.com
     int             port,     // eg. 80, 443, 3000, 8000, 8080
     const char*     req,      // eg. "GET / HTTP/1.1\r\nHost: www.google.com\r\nConnection: close\r\n\r\n"
@@ -72,8 +92,17 @@ void xrequest(
     void*           user,     // ptr passed to callback
     xreq_callback_t cb);      // Callback for receiving HTTP response buffer
 
+#endif // XHL_REQUEST_H
+
+#ifdef XHL_REQUEST_IMPL
+#undef XHL_REQUEST_IMPL
+
 #ifndef XREQ_LOGERROR
+#ifdef NDEBUG
+#define XREQ_LOGERROR(...)
+#else
 #define XREQ_LOGERROR(fmt, ...) fprintf(stderr, fmt "\n", __VA_ARGS__)
+#endif
 #endif // XREQ_LOGERROR
 
 #ifndef XREQ_ASSERT
@@ -81,14 +110,12 @@ void xrequest(
 #define XREQ_ASSERT(cond) assert(cond)
 #endif
 
-#ifdef XHL_REQUEST_IMPL
-
 #ifdef __APPLE__
 #include <Carbon/Carbon.h>
 #include <Security/SecureTransport.h>
 #include <netdb.h>
 
-#define ARRLEN(arr) (sizeof(arr) / sizeof(arr[0]))
+#define XREQ_ARRLEN(arr) (sizeof(arr) / sizeof(arr[0]))
 
 #ifdef NDEBUG
 #define dbg_printf(arg)
@@ -412,7 +439,7 @@ void xrequest(const char* hostname, int port, const char* req, unsigned reqlen, 
         goto cleanup;
     }
 
-    ortn = SSLSetEnabledCiphers(ctx, suitesAESGCM, ARRLEN(suitesAESGCM));
+    ortn = SSLSetEnabledCiphers(ctx, suitesAESGCM, XREQ_ARRLEN(suitesAESGCM));
     if (ortn)
     {
         dbg_printf(("*** SSLSetEnabledCiphers: %s", sslGetSSLErrString(ortn)));
@@ -627,12 +654,6 @@ typedef enum TLS_State
     TLS_STATE_CONNECTED                         = 2,
 } TLS_State;
 
-#ifdef NDEBUG
-#define dbg_fprintf(arg)
-#else
-#define dbg_fprintf(arg) fprintf arg
-#endif
-
 #ifndef NDEBUG
 const char* tls_state_string(TLS_State state)
 {
@@ -683,7 +704,7 @@ typedef struct TLS_Context
 } TLS_Context;
 
 // Called in a poll-style manner on Windows.
-static void tls_recv(TLS_Context* ctx)
+static void xrequest_recv(TLS_Context* ctx)
 {
     fd_set         sockets_to_check;
     struct timeval timeout;
@@ -717,27 +738,22 @@ static void tls_recv(TLS_Context* ctx)
 
         if (ctx->received == sizeof(ctx->incoming))
         {
-            // dbg_fprintf((stderr, "\nbuffer full\n"));
+            // XREQ_LOGERROR("buffer full");
             break;
         }
     }
 }
 
-int tls_connect(TLS_Context* ctx, const char* hostname, int port, void* userptr, xreq_callback_t cb)
+XRequestError xrequest_connect(TLS_Context* ctx, const char* hostname, int port, void* userptr, xreq_callback_t cb)
 {
-    int   err = 0;
-    int   NumChars;
-    WCHAR HostName[64];
-    NumChars = MultiByteToWideChar(
-        CP_UTF8,
-        MB_ERR_INVALID_CHARS,
-        hostname,
-        -1,
-        HostName,
-        sizeof(HostName) / sizeof(HostName[0]));
+    XRequestError err = 0;
+    int           NumChars;
+    WCHAR         HostName[64];
+    NumChars = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, hostname, -1, HostName, ARRAYSIZE(HostName));
     if (NumChars == 0)
     {
         XREQ_LOGERROR("[TLS] Error - Failed converting hostname to UTF16");
+        return XREQUEST_ERROR_UNKNOWN;
     }
 
     // Initialize winsock.
@@ -745,12 +761,12 @@ int tls_connect(TLS_Context* ctx, const char* hostname, int port, void* userptr,
         // https://learn.microsoft.com/en-us/windows/win32/api/winsock/ns-winsock-wsadata
         WSADATA wsadata;
         // https://learn.microsoft.com/en-us/windows/win32/api/winsock/nf-winsock-wsastartup
-        err = WSAStartup(MAKEWORD(2, 2), &wsadata);
-        XREQ_ASSERT(err == 0);
-        if (err)
+        int iResult = WSAStartup(MAKEWORD(2, 2), &wsadata);
+        XREQ_ASSERT(iResult == 0);
+        if (iResult)
         {
-            XREQ_LOGERROR("[TLS] Error - WSAStartup returned code %d", err);
-            return err;
+            XREQ_LOGERROR("[TLS] Error - WSAStartup returned code %d", iResult);
+            return XREQUEST_ERROR_CONNECTION_FAILED;
         }
     }
 
@@ -767,17 +783,17 @@ int tls_connect(TLS_Context* ctx, const char* hostname, int port, void* userptr,
         hints.ai_socktype = SOCK_STREAM;
         hints.ai_protocol = IPPROTO_TCP;
         // https://learn.microsoft.com/en-us/windows/win32/api/ws2tcpip/nf-ws2tcpip-getaddrinfow
-        err = GetAddrInfoW(HostName, ServiceName, &hints, &ctx->AddrInfo);
-        XREQ_ASSERT(err == 0);
-        if (err)
+        int SocketError = GetAddrInfoW(HostName, ServiceName, &hints, &ctx->AddrInfo);
+        XREQ_ASSERT(SocketError == 0);
+        if (SocketError)
         {
-            XREQ_LOGERROR("[TLS] Error - getaddrinfo returned: %d", err);
-            return err;
+            XREQ_LOGERROR("[TLS] Error - getaddrinfo returned: %d", SocketError);
+            return XREQUEST_ERROR_CONNECTION_FAILED;
         }
     }
 
     if (cb(userptr, 0, 0) != XREQUEST_CONTINUE)
-        return 1;
+        return XREQUEST_ERROR_USER_CANCELLED;
 
     // Create a TCP IPv4 socket.
     // https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-socket
@@ -787,21 +803,20 @@ int tls_connect(TLS_Context* ctx, const char* hostname, int port, void* userptr,
         int error = WSAGetLastError();
         XREQ_ASSERT(ctx->sock != -1);
         XREQ_LOGERROR("[TLS] Error - socket returned: %d", error);
-        err = 1;
-        return err;
+        return XREQUEST_ERROR_CONNECTION_FAILED;
     }
 
     // Set non-blocking IO.
     {
         // https://learn.microsoft.com/en-us/windows/win32/api/winsock/nf-winsock-ioctlsocket
-        u_long non_blocking = 0;
-        err                 = ioctlsocket(ctx->sock, (long)FIONBIO, &non_blocking);
-        XREQ_ASSERT(err == 0);
-        if (err)
+        u_long iMode   = 0;
+        int    iResult = ioctlsocket(ctx->sock, (long)FIONBIO, &iMode);
+        XREQ_ASSERT(iResult == 0);
+        if (iResult != NO_ERROR)
         {
             int error = WSAGetLastError();
             XREQ_LOGERROR("[TLS] Error - ioctlsocket returned: %d", error);
-            return err;
+            return XREQUEST_ERROR_CONNECTION_FAILED;
         }
     }
 
@@ -816,13 +831,13 @@ int tls_connect(TLS_Context* ctx, const char* hostname, int port, void* userptr,
         {
             err = 1;
             XREQ_LOGERROR("[TLS] Error - connect returned: %d", error);
-            ctx->state = ctx->state = TLS_STATE_INVALID_SOCKET;
-            return err;
+            ctx->state = TLS_STATE_INVALID_SOCKET;
+            return XREQUEST_ERROR_CONNECTION_FAILED;
         }
     }
 
     if (cb(userptr, 0, 0) != XREQUEST_CONTINUE)
-        return 1;
+        return XREQUEST_ERROR_USER_CANCELLED;
 
     ctx->state = TLS_STATE_PENDING;
 
@@ -840,22 +855,29 @@ int tls_connect(TLS_Context* ctx, const char* hostname, int port, void* userptr,
     XREQ_ASSERT(err == 0);
     if (err != SEC_E_OK)
     {
-        XREQ_LOGERROR("[TLS] Error - AcquireCredentialsHandleA: %d\n", err);
+        XREQ_LOGERROR("[TLS] Error - AcquireCredentialsHandleA: %d", err);
         return err;
     }
 
     // Wait for TCP to connect.
-    while (1)
+    while (err == XREQUEST_ERROR_NONE)
     {
-        fd_set         sockets_to_check;
-        struct timeval timeout;
+        // https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-select
+        fd_set sockets_to_check;
 
         FD_ZERO(&sockets_to_check);
         FD_SET(ctx->sock, &sockets_to_check);
-        timeout.tv_sec  = 0;
-        timeout.tv_usec = 0;
-        int numsockets  = select((int)(ctx->sock + 1), NULL, &sockets_to_check, NULL, &timeout);
-        if (numsockets == 1)
+        int iResult = select((int)(ctx->sock + 1), NULL, &sockets_to_check, NULL, NULL);
+        if (iResult == SOCKET_ERROR)
+        {
+            err = XREQUEST_ERROR_UNKNOWN;
+            break;
+        }
+        if (iResult == 0)
+        {
+            // Timeout
+        }
+        if (iResult == 1) // iResult >= 0 means number of sockets
         {
             int       opt = -1;
             socklen_t len = sizeof(opt);
@@ -869,7 +891,7 @@ int tls_connect(TLS_Context* ctx, const char* hostname, int port, void* userptr,
     while (ctx->state == TLS_STATE_PENDING)
     {
         if (cb(userptr, 0, 0) != XREQUEST_CONTINUE)
-            return 1;
+            return XREQUEST_ERROR_USER_CANCELLED;
 
         // TLS handshake algorithm.
         // 1. Call InitializeSecurityContext.
@@ -995,37 +1017,39 @@ int tls_connect(TLS_Context* ctx, const char* hostname, int port, void* userptr,
 
         // 4. Read data from the server (recv).
         XREQ_ASSERT(ctx->state == TLS_STATE_PENDING);
-        tls_recv(ctx);
+        xrequest_recv(ctx);
     }
 
     return err;
 }
 
-void xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void* user_ptr, xreq_callback_t cb)
+XRequestError
+xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void* user_ptr, xreq_callback_t cb)
 {
-    TLS_Context* ctx;
-    int          err = 0;
-    ctx              = calloc(1, sizeof(*ctx));
-    if (tls_connect(ctx, hostname, port, user_ptr, cb))
+    XRequestError err = XREQUEST_ERROR_NONE;
+    TLS_Context*  ctx = calloc(1, sizeof(*ctx));
+
+    err = xrequest_connect(ctx, hostname, port, user_ptr, cb);
+    if (err != XREQUEST_ERROR_NONE)
         goto disconnect;
 
     XREQ_ASSERT(ctx->state == TLS_STATE_CONNECTED);
 
     if (ctx->state != TLS_STATE_CONNECTED)
     {
-        dbg_fprintf((stderr, "Error connecting to to %s with code %s.\n", hostname, tls_state_string(ctx->state)));
+        XREQ_LOGERROR("Error connecting to to %s with code %s.", hostname, tls_state_string(ctx->state));
         goto disconnect;
     }
 
-    dbg_fprintf((stderr, "Connected to %s!\n", hostname));
-    dbg_fprintf((stderr, "Sending HTTP request\n"));
+    XREQ_LOGERROR("Connected to %s!", hostname);
+    XREQ_LOGERROR("Sending HTTP request");
 
     // Send request.
     {
         const char* req_read_ptr  = req;
         int         req_remaining = reqlen;
 
-        while (req_remaining != 0 && err == 0)
+        while (req_remaining != 0 && err == XREQUEST_ERROR_NONE)
         {
             int use = req_remaining;
             if (use > ctx->sizes.cbMaximumMessage)
@@ -1053,7 +1077,7 @@ void xrequest(const char* hostname, int port, const char* req, unsigned reqlen, 
             {
                 // This should not happen, but just in case check it.
                 ctx->state = TLS_STATE_UNKNOWN_ERROR;
-                err        = -1;
+                err        = XREQUEST_ERROR_UNKNOWN;
                 break;
             }
 
@@ -1069,36 +1093,36 @@ void xrequest(const char* hostname, int port, const char* req, unsigned reqlen, 
                     {
                         // Error sending data to socket, or server disconnected.
                         ctx->state = TLS_STATE_UNKNOWN_ERROR;
-                        err        = -1;
+                        err        = XREQUEST_ERROR_CONNECTION_FAILED;
                         break;
                     }
                 }
                 sent += d;
             }
 
-            if (err == 0)
+            if (err == XREQUEST_ERROR_NONE)
             {
                 req_read_ptr  += use;
                 req_remaining -= use;
             }
         }
 
-        if (err != 0)
+        if (err != XREQUEST_ERROR_NONE)
         {
-            dbg_fprintf((stderr, "Failed to send request.\n"));
+            XREQ_LOGERROR("Failed to send request.");
             goto disconnect;
         }
     }
 
-    dbg_fprintf((stderr, "Receiving HTTP response\n"));
+    XREQ_LOGERROR("Receiving HTTP response");
     // Write the full HTTP response to file.
-    while (ctx->state == TLS_STATE_CONNECTED && err == 0)
+    while (ctx->state == TLS_STATE_CONNECTED && err == XREQUEST_ERROR_NONE)
     {
         // Read ciphertext data data from the TCP socket.
-        tls_recv(ctx);
+        xrequest_recv(ctx);
 
         // Buffer may be full
-        while (ctx->received && err == 0)
+        while (ctx->received && ctx->state == TLS_STATE_CONNECTED && err == XREQUEST_ERROR_NONE)
         {
             int       size       = 0;
             SecBuffer buffers[4] = {0};
@@ -1113,11 +1137,22 @@ void xrequest(const char* hostname, int port, const char* req, unsigned reqlen, 
 
             SecBufferDesc desc = {SECBUFFER_VERSION, ARRAYSIZE(buffers), buffers};
 
-            ULONG           type = 0;
-            SECURITY_STATUS sec  = DecryptMessage(&ctx->context, &desc, 0, &type);
+            ULONG                 type = 0;
+            const SECURITY_STATUS sec  = DecryptMessage(&ctx->context, &desc, 0, &type);
 
-            XREQ_ASSERT(sec == SEC_E_OK || sec == SEC_E_INCOMPLETE_MESSAGE || sec == SEC_I_CONTEXT_EXPIRED);
-            if (sec == SEC_E_OK)
+            if (sec == SEC_E_INCOMPLETE_MESSAGE)
+            {
+                // We need to call recv again
+                break;
+            }
+
+            XREQ_ASSERT(sec == SEC_E_OK || sec == SEC_I_CONTEXT_EXPIRED);
+
+            BOOL HaveNewData = buffers[0].BufferType == SECBUFFER_STREAM_HEADER &&
+                               buffers[1].BufferType == SECBUFFER_DATA &&
+                               buffers[2].BufferType == SECBUFFER_STREAM_TRAILER;
+
+            if (HaveNewData && (sec == SEC_E_OK || sec == SEC_I_CONTEXT_EXPIRED))
             {
                 // Successfully decrypted some data.
                 XREQ_ASSERT(buffers[0].BufferType == SECBUFFER_STREAM_HEADER);
@@ -1133,10 +1168,11 @@ void xrequest(const char* hostname, int port, const char* req, unsigned reqlen, 
                 // Consume decrypted buffer
                 if (decrypted)
                 {
-                    err = cb(user_ptr, decrypted, size);
-                    if (err != XREQUEST_CONTINUE)
+                    int cb_retcode = cb(user_ptr, decrypted, size);
+                    if (cb_retcode != XREQUEST_CONTINUE)
                     {
-                        dbg_fprintf((stderr, "Cancelled\n"));
+                        err = XREQUEST_ERROR_USER_CANCELLED;
+                        XREQ_LOGERROR("Cancelled");
                         break;
                     }
 
@@ -1145,31 +1181,29 @@ void xrequest(const char* hostname, int port, const char* req, unsigned reqlen, 
                     ctx->received -= used;
                 }
             }
-            else if (sec == SEC_I_CONTEXT_EXPIRED)
+
+            if (sec == SEC_I_CONTEXT_EXPIRED)
             {
-                // Server closed TLS connection (but socket is still open).
-                // XREQ_LOGERROR("[TLS] WARNING: Server closed the TLS connection. Remaining: %u\n", ctx->received);
-                ctx->state    = TLS_STATE_DISCONNECTED;
-                ctx->received = 0;
+                // https://learn.microsoft.com/en-us/windows/win32/secauthn/shutting-down-an-schannel-connection
+                // Server closed TLS connection. We may actually have all required data
+                // Note that you must guarantee this yourself by parsing the response and checking "Content-Length:"
+                // matches the actual content length
+                // XREQ_LOGERROR("[TLS] WARNING: Server closed the TLS connection.
+                // Remaining: %u\n", ctx->received);
+                ctx->state = TLS_STATE_DISCONNECTED;
             }
             else if (sec == SEC_I_RENEGOTIATE)
             {
                 // Server wants to renegotiate TLS connection, not implemented here.
-                XREQ_LOGERROR("[TLS] WARNING: DecryptMessage returned %s", "SEC_I_RENEGOTIATE");
+                XREQ_LOGERROR("[TLS] WARNING: DecryptMessage returned SEC_I_RENEGOTIATE");
 
+                err           = XREQUEST_ERROR_UNKNOWN;
                 ctx->state    = TLS_STATE_UNKNOWN_ERROR;
                 ctx->received = 0;
             }
-            else if (sec != SEC_E_INCOMPLETE_MESSAGE)
+            else if (sec != SEC_E_OK)
             {
                 XREQ_LOGERROR("[TLS] WARNING: DecryptMessage returned unkown code %ld", sec);
-                ctx->state    = TLS_STATE_UNKNOWN_ERROR;
-                ctx->received = 0;
-            }
-            else
-            {
-                XREQ_LOGERROR("[TLS] WARNING: DecryptMessage returned %s", "SEC_E_INCOMPLETE_MESSAGE");
-                XREQ_ASSERT(sec == SEC_E_INCOMPLETE_MESSAGE);
                 // More data needs to be read.
             }
 
@@ -1180,7 +1214,7 @@ void xrequest(const char* hostname, int port, const char* req, unsigned reqlen, 
 
     // After the server disconnects, there may be lots of remaining data to process
     XREQ_ASSERT(ctx->received == 0);
-    dbg_fprintf((stderr, "State %s\n", tls_state_string(ctx->state)));
+    XREQ_LOGERROR("State %s", tls_state_string(ctx->state));
 
 disconnect:
     if (ctx->state >= 0)
@@ -1239,8 +1273,9 @@ disconnect:
         FreeCredentialsHandle(&ctx->handle);
 
     free(ctx);
+
+    return err;
 }
 #endif // _WIN32
 
 #endif // XHL_REQUEST_IMPL
-#endif // XHL_REQUEST_H
