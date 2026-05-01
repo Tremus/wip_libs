@@ -97,13 +97,13 @@ XRequestError xrequest(
 #ifdef XHL_REQUEST_IMPL
 #undef XHL_REQUEST_IMPL
 
-#ifndef XREQ_LOGERROR
+#ifndef XREQ_PRINT
 #ifdef NDEBUG
-#define XREQ_LOGERROR(...)
+#define XREQ_PRINT(...)
 #else
-#define XREQ_LOGERROR(fmt, ...) fprintf(stderr, fmt "\n", __VA_ARGS__)
+#define XREQ_PRINT(fmt, ...) fprintf(stderr, fmt "\n", __VA_ARGS__)
 #endif
-#endif // XREQ_LOGERROR
+#endif // XREQ_PRINT
 
 #ifndef XREQ_ASSERT
 #include <assert.h>
@@ -287,27 +287,27 @@ OSStatus SocketRead(
         }
         else // rrtn < 0
         {
-            /* this is guesswork... */
+            // this is guesswork...
             int theErr = errno;
             if ((rrtn == 0) && (theErr == 0))
             {
-                /* try fix for iSync */
+                // try fix for iSync
                 rtn = errSSLClosedGraceful;
                 // rtn = errSSLClosedAbort;
             }
-            else /* do the switch */
+            else // do the switch
             {
                 switch (theErr)
                 {
                 case ENOENT:
-                    /* connection closed */
+                    // connection closed
                     rtn       = errSSLClosedGraceful;
                     bytesRead = bytesToGo;
                     break;
                 case ECONNRESET:
                     rtn = errSSLClosedAbort;
                     break;
-                case 0: /* ??? */
+                case 0: // ???
                     rtn = errSSLWouldBlock;
                     break;
                 case ERANGE:
@@ -326,7 +326,8 @@ OSStatus SocketRead(
     return rtn;
 }
 
-OSStatus SocketWrite(SSLConnectionRef connection, const void* data, size_t* dataLength) /* IN/OUT */
+// IN/OUT
+OSStatus SocketWrite(SSLConnectionRef connection, const void* data, size_t* dataLength)
 {
     OSStatus ortn = noErr;
 
@@ -369,11 +370,11 @@ xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void*
     // If I don't, the program runs fine...?
     SecTrustRef trust = NULL; // peer certs macOS 10.6-10.15
 
-    /* first make sure requested server is there */
+    // first make sure requested server is there
     ent = gethostbyname(hostname);
     if (!ent)
     {
-        XREQ_LOGERROR("gethostbyname failed");
+        XREQ_PRINT("gethostbyname failed");
         ortn = ioErr;
     }
     else
@@ -386,64 +387,61 @@ xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void*
         addr.sin_family = AF_INET;
         if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) != 0)
         {
-            XREQ_LOGERROR("connect returned error");
+            XREQ_PRINT("connect returned error");
             ortn = ioErr;
         }
     }
     if (ortn)
     {
-        XREQ_LOGERROR("Failed to make connection with server. Status %d; aborting", ortn);
+        XREQ_PRINT("Failed to make connection with server. Status %d; aborting", ortn);
         goto cleanup;
     }
-    XREQ_LOGERROR("connected to server; starting SecureTransport...");
+    XREQ_PRINT("connected to server; starting SecureTransport...");
 
-    /*
-     * Set up a SecureTransport session.
-     * First the standard calls.
-     */
+    // Set up a SecureTransport session.
+    // First the standard calls.
     ortn = SSLNewContext(false, &ctx);
     if (ortn)
     {
-        XREQ_LOGERROR("*** SSLNewContext: %s", sslGetSSLErrString(ortn));
+        XREQ_PRINT("*** SSLNewContext: %s", sslGetSSLErrString(ortn));
         goto cleanup;
     }
     ortn = SSLSetIOFuncs(ctx, SocketRead, SocketWrite);
     if (ortn)
     {
-        XREQ_LOGERROR("*** SSLSetIOFuncs: %s", sslGetSSLErrString(ortn));
+        XREQ_PRINT("*** SSLSetIOFuncs: %s", sslGetSSLErrString(ortn));
         goto cleanup;
     }
     ortn = SSLSetProtocolVersion(ctx, kTLSProtocol12);
     if (ortn)
     {
-        XREQ_LOGERROR("*** SSLSetProtocolVersion: %s", sslGetSSLErrString(ortn));
+        XREQ_PRINT("*** SSLSetProtocolVersion: %s", sslGetSSLErrString(ortn));
         goto cleanup;
     }
     ortn = SSLSetConnection(ctx, (SSLConnectionRef)(size_t)sock);
     if (ortn)
     {
-        XREQ_LOGERROR("*** SSLSetConnection: %s", sslGetSSLErrString(ortn));
+        XREQ_PRINT("*** SSLSetConnection: %s", sslGetSSLErrString(ortn));
         goto cleanup;
     }
 
-    /* if this isn't set, it isn't checked by APpleX509TP */
+    // if this isn't set, it isn't checked by APpleX509TP
     ortn = SSLSetPeerDomainName(ctx, hostname, strlen(hostname) + 1);
     if (ortn)
     {
-        XREQ_LOGERROR("*** SSLSetPeerDomainName: %s", sslGetSSLErrString(ortn));
+        XREQ_PRINT("*** SSLSetPeerDomainName: %s", sslGetSSLErrString(ortn));
         goto cleanup;
     }
 
     ortn = SSLSetEnabledCiphers(ctx, suitesAESGCM, XREQ_ARRLEN(suitesAESGCM));
     if (ortn)
     {
-        XREQ_LOGERROR("*** SSLSetEnabledCiphers: %s", sslGetSSLErrString(ortn));
+        XREQ_PRINT("*** SSLSetEnabledCiphers: %s", sslGetSSLErrString(ortn));
         goto cleanup;
     }
+    // end options
 
-    /*** end options ***/
-
-    XREQ_LOGERROR("starting SSL handshake...");
+    XREQ_PRINT("starting SSL handshake...");
 
     do
     {
@@ -463,29 +461,29 @@ xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void*
     }
     else
     {
-        XREQ_LOGERROR("***Error SSLHandshake: %s", sslGetSSLErrString(ortn));
+        XREQ_PRINT("***Error SSLHandshake: %s", sslGetSSLErrString(ortn));
         goto cleanup;
     }
 
-    /* this works even if handshake failed due to cert chain invalid */
+    // this works even if handshake failed due to cert chain invalid
     trust = NULL;
     ortn  = SSLCopyPeerTrust(ctx, &trust);
     if (ortn)
     {
-        XREQ_LOGERROR("***Error obtaining peer certs: %s", sslGetSSLErrString(ortn));
+        XREQ_PRINT("***Error obtaining peer certs: %s", sslGetSSLErrString(ortn));
         goto cleanup;
     }
 
     ortn = SSLGetNegotiatedCipher(ctx, &negCipher);
     if (ortn)
     {
-        XREQ_LOGERROR("***Error SSLGetNegotiatedCipher: %s", sslGetSSLErrString(ortn));
+        XREQ_PRINT("***Error SSLGetNegotiatedCipher: %s", sslGetSSLErrString(ortn));
         goto cleanup;
     }
     ortn = SSLGetNegotiatedProtocolVersion(ctx, &negVersion);
     if (ortn)
     {
-        XREQ_LOGERROR("***Error SSLGetNegotiatedProtocolVersion: %s", sslGetSSLErrString(ortn));
+        XREQ_PRINT("***Error SSLGetNegotiatedProtocolVersion: %s", sslGetSSLErrString(ortn));
         goto cleanup;
     }
 
@@ -495,14 +493,14 @@ xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void*
         goto cleanup;
     }
 
-    XREQ_LOGERROR("SSL handshake complete; Sending request message...");
+    XREQ_PRINT("SSL handshake complete; Sending request message...");
     {
         size_t nprocessed;
         ortn = SSLWrite(ctx, req, reqlen, &nprocessed);
     }
     if (ortn)
     {
-        XREQ_LOGERROR("***Error SSLWrite: %s", sslGetSSLErrString(ortn));
+        XREQ_PRINT("***Error SSLWrite: %s", sslGetSSLErrString(ortn));
         goto cleanup;
     }
 
@@ -512,7 +510,7 @@ xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void*
         goto cleanup;
     }
 
-    XREQ_LOGERROR("SSL write complete complete; Receiving response...");
+    XREQ_PRINT("SSL write complete complete; Receiving response...");
     {
         uint8  resbuf[4096]; // decrypted response
         size_t resbuflen;
@@ -525,7 +523,7 @@ xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void*
             ortn = SSLGetBufferedReadSize(ctx, &avail);
             if (ortn)
             {
-                XREQ_LOGERROR("***Error SSLGetBufferedReadSize: %s", sslGetSSLErrString(ortn));
+                XREQ_PRINT("***Error SSLGetBufferedReadSize: %s", sslGetSSLErrString(ortn));
                 break;
             }
             ortn = SSLRead(ctx, resbuf, sizeof(resbuf), &resbuflen);
@@ -536,8 +534,20 @@ xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void*
 
             // 'Successful' SSLRead calls returns abort errors on some domains.
             // I'm unsure if this is related to bad code used here, or bad code within macOS.
-            if (ortn == errSSLClosedAbort && (errno == ENOENT || errno == ERANGE))
-                ortn = errSSLClosedGraceful;
+            if (ortn == errSSLClosedAbort)
+            {
+                int err = errno;
+                // Some servers return these error codes when the response is valid
+                if (err == 0 || err == ENOENT || err == ERANGE || err == EINVAL)
+                {
+                    ortn = errSSLClosedGraceful;
+                }
+                else
+                {
+                    XREQ_ASSERT(false);
+                    XREQ_PRINT("SSLRead returned %s with errno %d", sslGetSSLErrString(ortn), err);
+                }
+            }
 
             if (resbuflen > 0)
             {
@@ -547,21 +557,17 @@ xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void*
             }
         }
     }
-    /* connection closed by server or by error */
-    XREQ_LOGERROR("\nFinished SSLRead with OSStatus %s, errno: %d", sslGetSSLErrString(ortn), errno);
-
-    /* convert normal "shutdown" into zero err rtn */
-    if (ortn == errSSLClosedGraceful)
-        ortn = noErr;
+    // connection closed by server or by error
+    XREQ_PRINT("\nFinished SSLRead with OSStatus %s, errno: %d", sslGetSSLErrString(ortn), errno);
 
 cleanup:
-#ifndef NDEBUG
+    if (ortn == errSSLClosedGraceful)
+        ortn = noErr;
     if (ortn == errSecUserCanceled)
         ortn = noErr;
     XREQ_ASSERT(ortn == noErr);
-#endif
     if (ortn != noErr)
-        XREQ_LOGERROR("[TLS] WARNING: Finished with code %d", ortn);
+        XREQ_PRINT("[TLS] WARNING: Finished with code %d", ortn);
 
     if (open)
         SSLClose(ctx);
@@ -570,11 +576,11 @@ cleanup:
     if (ctx)
         SSLDisposeContext(ctx);
 
-    XREQ_LOGERROR("");
-    XREQ_LOGERROR("   Attempted  SSL version : %s", sslGetProtocolVersionString(kTLSProtocol12));
-    XREQ_LOGERROR("   Result                 : %s", sslGetSSLErrString(ortn));
-    XREQ_LOGERROR("   Negotiated SSL version : %s", sslGetProtocolVersionString(negVersion));
-    XREQ_LOGERROR("   Negotiated CipherSuite : %s", sslGetCipherSuiteString(negCipher));
+    XREQ_PRINT("");
+    XREQ_PRINT("   Attempted  SSL version : %s", sslGetProtocolVersionString(kTLSProtocol12));
+    XREQ_PRINT("   Result                 : %s", sslGetSSLErrString(ortn));
+    XREQ_PRINT("   Negotiated SSL version : %s", sslGetProtocolVersionString(negVersion));
+    XREQ_PRINT("   Negotiated CipherSuite : %s", sslGetCipherSuiteString(negCipher));
 
     if (trust != NULL)
     {
@@ -582,7 +588,7 @@ cleanup:
         CFIndex           i;
         SecCertificateRef certData;
         numCerts = SecTrustGetCertificateCount(trust);
-        // XREQ_LOGERROR("   Number of server certs : %ld", numCerts));
+        // XREQ_PRINT("   Number of server certs : %ld", numCerts));
         for (i = 0; i < numCerts; i++)
         {
             certData = SecTrustGetCertificateAtIndex(trust, i);
@@ -594,20 +600,21 @@ cleanup:
     switch (ortn)
     {
     case noErr:
+    case errSSLClosedGraceful:
         return XREQUEST_ERROR_NONE;
     case ioErr:
         return XREQUEST_ERROR_CONNECTION_FAILED;
+    case errSecUserCanceled:
+        return XREQUEST_ERROR_USER_CANCELLED;
+    case errSSLClosedAbort:
     case memFullErr:
     case paramErr:
     case unimpErr:
-    case errSecUserCanceled:
     case errSSLProtocol:
     case errSSLNegotiation:
     case errSSLFatalAlert:
     case errSSLWouldBlock:
     case errSSLSessionNotFound:
-    case errSSLClosedGraceful:
-    case errSSLClosedAbort:
     case errSSLXCertChainInvalid:
     case errSSLBadCert:
     case errSSLCrypto:
@@ -767,7 +774,7 @@ static void xrequest_recv(TLS_Context* ctx)
 
         if (ctx->received == sizeof(ctx->incoming))
         {
-            // XREQ_LOGERROR("buffer full");
+            // XREQ_PRINT("buffer full");
             break;
         }
     }
@@ -781,7 +788,7 @@ XRequestError xrequest_connect(TLS_Context* ctx, const char* hostname, int port,
     NumChars = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, hostname, -1, HostName, ARRAYSIZE(HostName));
     if (NumChars == 0)
     {
-        XREQ_LOGERROR("[TLS] Error - Failed converting hostname to UTF16");
+        XREQ_PRINT("[TLS] Error - Failed converting hostname to UTF16");
         return XREQUEST_ERROR_UNKNOWN;
     }
 
@@ -794,7 +801,7 @@ XRequestError xrequest_connect(TLS_Context* ctx, const char* hostname, int port,
         XREQ_ASSERT(iResult == 0);
         if (iResult)
         {
-            XREQ_LOGERROR("[TLS] Error - WSAStartup returned code %d", iResult);
+            XREQ_PRINT("[TLS] Error - WSAStartup returned code %d", iResult);
             return XREQUEST_ERROR_CONNECTION_FAILED;
         }
     }
@@ -816,7 +823,7 @@ XRequestError xrequest_connect(TLS_Context* ctx, const char* hostname, int port,
         XREQ_ASSERT(SocketError == 0);
         if (SocketError)
         {
-            XREQ_LOGERROR("[TLS] Error - getaddrinfo returned: %d", SocketError);
+            XREQ_PRINT("[TLS] Error - getaddrinfo returned: %d", SocketError);
             return XREQUEST_ERROR_CONNECTION_FAILED;
         }
     }
@@ -831,7 +838,7 @@ XRequestError xrequest_connect(TLS_Context* ctx, const char* hostname, int port,
     {
         int error = WSAGetLastError();
         XREQ_ASSERT(ctx->sock != -1);
-        XREQ_LOGERROR("[TLS] Error - socket returned: %d", error);
+        XREQ_PRINT("[TLS] Error - socket returned: %d", error);
         return XREQUEST_ERROR_CONNECTION_FAILED;
     }
 
@@ -844,7 +851,7 @@ XRequestError xrequest_connect(TLS_Context* ctx, const char* hostname, int port,
         if (iResult != NO_ERROR)
         {
             int error = WSAGetLastError();
-            XREQ_LOGERROR("[TLS] Error - ioctlsocket returned: %d", error);
+            XREQ_PRINT("[TLS] Error - ioctlsocket returned: %d", error);
             return XREQUEST_ERROR_CONNECTION_FAILED;
         }
     }
@@ -859,7 +866,7 @@ XRequestError xrequest_connect(TLS_Context* ctx, const char* hostname, int port,
         if (error != WSAEWOULDBLOCK && error != WSAEINPROGRESS)
         {
             err = 1;
-            XREQ_LOGERROR("[TLS] Error - connect returned: %d", error);
+            XREQ_PRINT("[TLS] Error - connect returned: %d", error);
             ctx->state = TLS_STATE_INVALID_SOCKET;
             return XREQUEST_ERROR_CONNECTION_FAILED;
         }
@@ -884,7 +891,7 @@ XRequestError xrequest_connect(TLS_Context* ctx, const char* hostname, int port,
     XREQ_ASSERT(err == 0);
     if (err != SEC_E_OK)
     {
-        XREQ_LOGERROR("[TLS] Error - AcquireCredentialsHandleA: %d", err);
+        XREQ_PRINT("[TLS] Error - AcquireCredentialsHandleA: %d", err);
         return err;
     }
 
@@ -1066,12 +1073,12 @@ xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void*
 
     if (ctx->state != TLS_STATE_CONNECTED)
     {
-        XREQ_LOGERROR("Error connecting to to %s with code %s.", hostname, tls_state_string(ctx->state));
+        XREQ_PRINT("Error connecting to to %s with code %s.", hostname, tls_state_string(ctx->state));
         goto disconnect;
     }
 
-    XREQ_LOGERROR("Connected to %s!", hostname);
-    XREQ_LOGERROR("Sending HTTP request");
+    XREQ_PRINT("Connected to %s!", hostname);
+    XREQ_PRINT("Sending HTTP request");
 
     // Send request.
     {
@@ -1138,12 +1145,12 @@ xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void*
 
         if (err != XREQUEST_ERROR_NONE)
         {
-            XREQ_LOGERROR("Failed to send request.");
+            XREQ_PRINT("Failed to send request.");
             goto disconnect;
         }
     }
 
-    XREQ_LOGERROR("Receiving HTTP response");
+    XREQ_PRINT("Receiving HTTP response");
     // Write the full HTTP response to file.
     while (ctx->state == TLS_STATE_CONNECTED && err == XREQUEST_ERROR_NONE)
     {
@@ -1201,7 +1208,7 @@ xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void*
                     if (cb_retcode != XREQUEST_CONTINUE)
                     {
                         err = XREQUEST_ERROR_USER_CANCELLED;
-                        XREQ_LOGERROR("Cancelled");
+                        XREQ_PRINT("Cancelled");
                         break;
                     }
 
@@ -1217,13 +1224,13 @@ xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void*
                 // Server closed TLS connection. We may actually have all required data
                 // Note that you must guarantee this yourself by parsing the response and checking "Content-Length:"
                 // matches the actual content length
-                // XREQ_LOGERROR("[TLS] WARNING: Server closed the TLS connection. Remaining: %u", ctx->received);
+                // XREQ_PRINT("[TLS] WARNING: Server closed the TLS connection. Remaining: %u", ctx->received);
                 ctx->state = TLS_STATE_DISCONNECTED;
             }
             else if (sec == SEC_I_RENEGOTIATE)
             {
                 // Server wants to renegotiate TLS connection, not implemented here.
-                XREQ_LOGERROR("[TLS] WARNING: DecryptMessage returned SEC_I_RENEGOTIATE");
+                XREQ_PRINT("[TLS] WARNING: DecryptMessage returned SEC_I_RENEGOTIATE");
 
                 err           = XREQUEST_ERROR_UNKNOWN;
                 ctx->state    = TLS_STATE_UNKNOWN_ERROR;
@@ -1231,7 +1238,7 @@ xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void*
             }
             else if (sec != SEC_E_OK)
             {
-                XREQ_LOGERROR("[TLS] WARNING: DecryptMessage returned unkown code %ld", sec);
+                XREQ_PRINT("[TLS] WARNING: DecryptMessage returned unkown code %ld", sec);
                 // More data needs to be read.
             }
 
@@ -1241,7 +1248,7 @@ xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void*
     }
 
     // After the server disconnects, there may be lots of remaining data to process
-    XREQ_LOGERROR("State %s", tls_state_string(ctx->state));
+    XREQ_PRINT("State %s", tls_state_string(ctx->state));
 
 disconnect:
     if (ctx->state >= 0)
