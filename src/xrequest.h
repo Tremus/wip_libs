@@ -117,10 +117,6 @@ XRequestError xrequest(
 
 #define XREQ_ARRLEN(arr) (sizeof(arr) / sizeof(arr[0]))
 
-#ifdef NDEBUG
-#define dbg_printf(arg)
-#else
-#define dbg_printf(arg) printf arg
 char* sslGetProtocolVersionString(SSLProtocol prot)
 {
     static char noProt[20];
@@ -247,8 +243,6 @@ char* sslGetCipherSuiteString(SSLCipherSuite cs)
     }
 }
 
-#endif // NDEBUG
-
 static const SSLCipherSuite suitesAESGCM[] = {
     TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, // 0xC02B
     TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384, // 0xC02C
@@ -359,7 +353,8 @@ OSStatus SocketWrite(SSLConnectionRef connection, const void* data, size_t* data
     return ortn;
 }
 
-void xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void* user_ptr, xreq_callback_t cb)
+XRequestError
+xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void* user_ptr, xreq_callback_t cb)
 {
     OSStatus           ortn       = noErr;
     int                sock       = 0;
@@ -378,7 +373,7 @@ void xrequest(const char* hostname, int port, const char* req, unsigned reqlen, 
     ent = gethostbyname(hostname);
     if (!ent)
     {
-        dbg_printf(("gethostbyname failed\n"));
+        XREQ_LOGERROR("gethostbyname failed");
         ortn = ioErr;
     }
     else
@@ -391,16 +386,16 @@ void xrequest(const char* hostname, int port, const char* req, unsigned reqlen, 
         addr.sin_family = AF_INET;
         if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) != 0)
         {
-            dbg_printf(("connect returned error\n"));
+            XREQ_LOGERROR("connect returned error");
             ortn = ioErr;
         }
     }
     if (ortn)
     {
-        dbg_printf(("Failed to make connection with server. Status %d; aborting\n", ortn));
+        XREQ_LOGERROR("Failed to make connection with server. Status %d; aborting", ortn);
         goto cleanup;
     }
-    dbg_printf(("connected to server; starting SecureTransport...\n"));
+    XREQ_LOGERROR("connected to server; starting SecureTransport...");
 
     /*
      * Set up a SecureTransport session.
@@ -409,25 +404,25 @@ void xrequest(const char* hostname, int port, const char* req, unsigned reqlen, 
     ortn = SSLNewContext(false, &ctx);
     if (ortn)
     {
-        dbg_printf(("*** SSLNewContext: %s", sslGetSSLErrString(ortn)));
+        XREQ_LOGERROR("*** SSLNewContext: %s", sslGetSSLErrString(ortn));
         goto cleanup;
     }
     ortn = SSLSetIOFuncs(ctx, SocketRead, SocketWrite);
     if (ortn)
     {
-        dbg_printf(("*** SSLSetIOFuncs: %s", sslGetSSLErrString(ortn)));
+        XREQ_LOGERROR("*** SSLSetIOFuncs: %s", sslGetSSLErrString(ortn));
         goto cleanup;
     }
     ortn = SSLSetProtocolVersion(ctx, kTLSProtocol12);
     if (ortn)
     {
-        dbg_printf(("*** SSLSetProtocolVersion: %s", sslGetSSLErrString(ortn)));
+        XREQ_LOGERROR("*** SSLSetProtocolVersion: %s", sslGetSSLErrString(ortn));
         goto cleanup;
     }
     ortn = SSLSetConnection(ctx, (SSLConnectionRef)(size_t)sock);
     if (ortn)
     {
-        dbg_printf(("*** SSLSetConnection: %s", sslGetSSLErrString(ortn)));
+        XREQ_LOGERROR("*** SSLSetConnection: %s", sslGetSSLErrString(ortn));
         goto cleanup;
     }
 
@@ -435,20 +430,20 @@ void xrequest(const char* hostname, int port, const char* req, unsigned reqlen, 
     ortn = SSLSetPeerDomainName(ctx, hostname, strlen(hostname) + 1);
     if (ortn)
     {
-        dbg_printf(("*** SSLSetPeerDomainName: %s", sslGetSSLErrString(ortn)));
+        XREQ_LOGERROR("*** SSLSetPeerDomainName: %s", sslGetSSLErrString(ortn));
         goto cleanup;
     }
 
     ortn = SSLSetEnabledCiphers(ctx, suitesAESGCM, XREQ_ARRLEN(suitesAESGCM));
     if (ortn)
     {
-        dbg_printf(("*** SSLSetEnabledCiphers: %s", sslGetSSLErrString(ortn)));
+        XREQ_LOGERROR("*** SSLSetEnabledCiphers: %s", sslGetSSLErrString(ortn));
         goto cleanup;
     }
 
     /*** end options ***/
 
-    dbg_printf(("starting SSL handshake...\n"));
+    XREQ_LOGERROR("starting SSL handshake...");
 
     do
     {
@@ -468,7 +463,7 @@ void xrequest(const char* hostname, int port, const char* req, unsigned reqlen, 
     }
     else
     {
-        dbg_printf(("***Error SSLHandshake: %s\n", sslGetSSLErrString(ortn)));
+        XREQ_LOGERROR("***Error SSLHandshake: %s", sslGetSSLErrString(ortn));
         goto cleanup;
     }
 
@@ -477,20 +472,20 @@ void xrequest(const char* hostname, int port, const char* req, unsigned reqlen, 
     ortn  = SSLCopyPeerTrust(ctx, &trust);
     if (ortn)
     {
-        dbg_printf(("***Error obtaining peer certs: %s\n", sslGetSSLErrString(ortn)));
+        XREQ_LOGERROR("***Error obtaining peer certs: %s", sslGetSSLErrString(ortn));
         goto cleanup;
     }
 
     ortn = SSLGetNegotiatedCipher(ctx, &negCipher);
     if (ortn)
     {
-        dbg_printf(("***Error SSLGetNegotiatedCipher: %s\n", sslGetSSLErrString(ortn)));
+        XREQ_LOGERROR("***Error SSLGetNegotiatedCipher: %s", sslGetSSLErrString(ortn));
         goto cleanup;
     }
     ortn = SSLGetNegotiatedProtocolVersion(ctx, &negVersion);
     if (ortn)
     {
-        dbg_printf(("***Error SSLGetNegotiatedProtocolVersion: %s\n", sslGetSSLErrString(ortn)));
+        XREQ_LOGERROR("***Error SSLGetNegotiatedProtocolVersion: %s", sslGetSSLErrString(ortn));
         goto cleanup;
     }
 
@@ -500,14 +495,14 @@ void xrequest(const char* hostname, int port, const char* req, unsigned reqlen, 
         goto cleanup;
     }
 
-    dbg_printf(("SSL handshake complete; Sending request message...\n"));
+    XREQ_LOGERROR("SSL handshake complete; Sending request message...");
     {
         size_t nprocessed;
         ortn = SSLWrite(ctx, req, reqlen, &nprocessed);
     }
     if (ortn)
     {
-        dbg_printf(("***Error SSLWrite: %s\n", sslGetSSLErrString(ortn)));
+        XREQ_LOGERROR("***Error SSLWrite: %s", sslGetSSLErrString(ortn));
         goto cleanup;
     }
 
@@ -517,7 +512,7 @@ void xrequest(const char* hostname, int port, const char* req, unsigned reqlen, 
         goto cleanup;
     }
 
-    dbg_printf(("SSL write complete complete; Receiving response...\n"));
+    XREQ_LOGERROR("SSL write complete complete; Receiving response...");
     {
         uint8  resbuf[4096]; // decrypted response
         size_t resbuflen;
@@ -530,7 +525,7 @@ void xrequest(const char* hostname, int port, const char* req, unsigned reqlen, 
             ortn = SSLGetBufferedReadSize(ctx, &avail);
             if (ortn)
             {
-                dbg_printf(("***Error SSLGetBufferedReadSize: %s\n", sslGetSSLErrString(ortn)));
+                XREQ_LOGERROR("***Error SSLGetBufferedReadSize: %s", sslGetSSLErrString(ortn));
                 break;
             }
             ortn = SSLRead(ctx, resbuf, sizeof(resbuf), &resbuflen);
@@ -553,7 +548,7 @@ void xrequest(const char* hostname, int port, const char* req, unsigned reqlen, 
         }
     }
     /* connection closed by server or by error */
-    dbg_printf(("\nFinished SSLRead with OSStatus %s, errno: %d\n", sslGetSSLErrString(ortn), errno));
+    XREQ_LOGERROR("\nFinished SSLRead with OSStatus %s, errno: %d", sslGetSSLErrString(ortn), errno);
 
     /* convert normal "shutdown" into zero err rtn */
     if (ortn == errSSLClosedGraceful)
@@ -575,11 +570,11 @@ cleanup:
     if (ctx)
         SSLDisposeContext(ctx);
 
-    dbg_printf(("\n"));
-    dbg_printf(("   Attempted  SSL version : %s\n", sslGetProtocolVersionString(kTLSProtocol12)));
-    dbg_printf(("   Result                 : %s\n", sslGetSSLErrString(ortn)));
-    dbg_printf(("   Negotiated SSL version : %s\n", sslGetProtocolVersionString(negVersion)));
-    dbg_printf(("   Negotiated CipherSuite : %s\n", sslGetCipherSuiteString(negCipher)));
+    XREQ_LOGERROR("");
+    XREQ_LOGERROR("   Attempted  SSL version : %s", sslGetProtocolVersionString(kTLSProtocol12));
+    XREQ_LOGERROR("   Result                 : %s", sslGetSSLErrString(ortn));
+    XREQ_LOGERROR("   Negotiated SSL version : %s", sslGetProtocolVersionString(negVersion));
+    XREQ_LOGERROR("   Negotiated CipherSuite : %s", sslGetCipherSuiteString(negCipher));
 
     if (trust != NULL)
     {
@@ -587,13 +582,47 @@ cleanup:
         CFIndex           i;
         SecCertificateRef certData;
         numCerts = SecTrustGetCertificateCount(trust);
-        // dbg_printf(("   Number of server certs : %ld\n", numCerts));
+        // XREQ_LOGERROR("   Number of server certs : %ld", numCerts));
         for (i = 0; i < numCerts; i++)
         {
             certData = SecTrustGetCertificateAtIndex(trust, i);
             CFRelease(certData);
         }
         // CFRelease(trust);
+    }
+
+    switch (ortn)
+    {
+    case noErr:
+        return XREQUEST_ERROR_NONE;
+    case ioErr:
+        return XREQUEST_ERROR_CONNECTION_FAILED;
+    case memFullErr:
+    case paramErr:
+    case unimpErr:
+    case errSecUserCanceled:
+    case errSSLProtocol:
+    case errSSLNegotiation:
+    case errSSLFatalAlert:
+    case errSSLWouldBlock:
+    case errSSLSessionNotFound:
+    case errSSLClosedGraceful:
+    case errSSLClosedAbort:
+    case errSSLXCertChainInvalid:
+    case errSSLBadCert:
+    case errSSLCrypto:
+    case errSSLInternal:
+    case errSSLModuleAttach:
+    case errSSLUnknownRootCert:
+    case errSSLNoRootCert:
+    case errSSLCertExpired:
+    case errSSLCertNotYetValid:
+    case badReqErr:
+    case errSSLClosedNoNotify:
+    case errSSLBufferOverflow:
+    case errSSLBadCipherSuite:
+    default:
+        return XREQUEST_ERROR_UNKNOWN;
     }
 }
 #endif // __APPLE__
@@ -1188,7 +1217,7 @@ xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void*
                 // Server closed TLS connection. We may actually have all required data
                 // Note that you must guarantee this yourself by parsing the response and checking "Content-Length:"
                 // matches the actual content length
-                // XREQ_LOGERROR("[TLS] WARNING: Server closed the TLS connection. Remaining: %u\n", ctx->received);
+                // XREQ_LOGERROR("[TLS] WARNING: Server closed the TLS connection. Remaining: %u", ctx->received);
                 ctx->state = TLS_STATE_DISCONNECTED;
             }
             else if (sec == SEC_I_RENEGOTIATE)
