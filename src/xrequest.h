@@ -669,6 +669,9 @@ cleanup:
 #include <stdio.h>
 #include <stdlib.h>
 
+#pragma comment(lib, "Ws2_32.lib")
+#pragma comment(lib, "Secur32.lib")
+
 #define TLS_PACKET_QUEUE_MAX_ENTRIES 64
 #define TLS_1_KB                     1024
 #define TLS_MAX_RECORD_SIZE          (16 * TLS_1_KB)                  // TLS defines records to be up to 16kb.
