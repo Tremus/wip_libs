@@ -80,8 +80,8 @@ enum // Event flags
     IMGUI_EVENT_TOUCHPAD_END   = 1 << 16,
 
     IMGUI_EVENT_DRAG_BEGIN = 1 << 17, // Drag source
-    IMGUI_EVENT_DRAG_END   = 1 << 18,
-    IMGUI_EVENT_DRAG_MOVE  = 1 << 19,
+    IMGUI_EVENT_DRAG_MOVE  = 1 << 18,
+    IMGUI_EVENT_DRAG_END   = 1 << 19,
 
     IMGUI_EVENT_DRAG_ENTER = 1 << 20, // Drag target
     IMGUI_EVENT_DRAG_EXIT  = 1 << 21,
@@ -90,7 +90,50 @@ enum // Event flags
 
     // TODO: file drag & drop, import/export
     // TODO: keyboard events
+    //       NOTE: adding keyboard events seems like a bad move. The parent windows need to know if the event was
+    //       consumed or not. It affects how events are propogated through other parts of the program. This can only be
+    //       done properly at event time, which means we have to start registering callbacks. Fortunately, most plugins
+    //       will only need to use 0-3 callbacks for those few tricky custom components wanting keyboard input
 };
+
+typedef union ImguiEvents
+{
+    unsigned _data;
+
+    struct
+    {
+        unsigned mouse_enter : 1;
+        unsigned mouse_exit : 1;
+        unsigned mouse_hover : 1;
+        unsigned mouse_moved : 1;
+
+        unsigned mouse_left_down : 1;
+        unsigned mouse_left_hold : 1;
+        unsigned mouse_left_up : 1;
+
+        unsigned mouse_right_down : 1;
+        unsigned mouse_right_hold : 1;
+        unsigned mouse_right_up : 1;
+
+        unsigned mouse_middle_down : 1;
+        unsigned mouse_middle_hold : 1;
+        unsigned mouse_middle_up : 1;
+
+        unsigned mouse_wheel : 1;
+        unsigned mouse_touchpad_begin : 1;
+        unsigned mouse_touchpad_moved : 1;
+        unsigned mouse_touchpad_end : 1;
+
+        unsigned mouse_drag_begin : 1;
+        unsigned mouse_drag_moved : 1;
+        unsigned mouse_drag_end : 1;
+
+        unsigned mouse_drag_enter : 1;
+        unsigned mouse_drag_exit : 1;
+        unsigned mouse_drag_over : 1;
+        unsigned mouse_drag_drop : 1;
+    };
+} ImguiEvents;
 
 // Handling mouse events at draw time goes against the OS's event consumption model. Things like dragging a file out of
 // a window on macOS can only be done in response to a mouse down event. So we need to support callbacks for the few
@@ -353,6 +396,9 @@ unsigned _imgui_get_events(imgui_context* ctx, unsigned uid, bool hover, bool mo
 
     unsigned events   = 0;
     unsigned frame_id = ++ctx->frame.id;
+
+    // Easier way to view events in debugger
+    ImguiEvents* _view_events = (ImguiEvents*)&events;
 
     // Hover
     const bool no_active_hover       = ctx->uid_mouse_over == 0;
@@ -673,6 +719,18 @@ void imgui_begin_frame(imgui_context* ctx, int window_width, int window_height)
     ctx->window_width  = window_width;
     ctx->window_height = window_height;
     imgui_clear_scissor(ctx);
+
+    // Unforunately C compilers don't do a great job validating bitfields at compile time, so we can't use
+    // _Static_assert and have to use runtime assertions instead
+#ifndef NDEBUG
+    ImguiEvents ev1 = (ImguiEvents){.mouse_enter = 1};
+    ImguiEvents ev2 = (ImguiEvents){.mouse_left_down = 1, .mouse_left_hold = 1};
+    ImguiEvents ev3 = (ImguiEvents){._data = IMGUI_EVENT_MOUSE_WHEEL | IMGUI_EVENT_MOUSE_MOVE};
+
+    PW_ASSERT(ev1._data == IMGUI_EVENT_MOUSE_ENTER);
+    PW_ASSERT(ev2._data == (IMGUI_EVENT_MOUSE_LEFT_DOWN | IMGUI_EVENT_MOUSE_LEFT_HOLD));
+    PW_ASSERT(ev3.mouse_wheel && ev3.mouse_moved);
+#endif
 }
 
 // Call at the end of every frame after all events have been processed
