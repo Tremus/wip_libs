@@ -804,6 +804,10 @@ bool imgui_send_event(imgui_context* ctx, const PWEvent* e)
         // ctx->mouse_right_down_id = 0;
         // ctx->mouse_drag_id       = 0;
 
+        // If the window suddnely looses focus, cancel the drag.
+        ctx->frame.uid_drag_end      = ctx->uid_drag;
+        ctx->frame.uid_drag_over_end = ctx->uid_drag_over;
+
         ctx->uid_mouse_over      = 0;
         ctx->uid_mouse_hold      = 0;
         ctx->uid_drag            = 0;
@@ -863,6 +867,8 @@ bool imgui_send_event(imgui_context* ctx, const PWEvent* e)
 
         if (ctx->mouse_hold_type == IMGUI_MOUSE_BUTTON_NONE || ctx->mouse_hold_type == btn_type)
         {
+            // TODO: handle the case where multiple button down events are sent without a corresponding mouse up
+            // Windows applications like X-Mouse Button Control can do this
             const bool valid_state_1 = ctx->uid_mouse_hold == 0 && ctx->mouse_hold_type == IMGUI_MOUSE_BUTTON_NONE;
             const bool valid_state_2 = ctx->uid_mouse_hold != 0 && ctx->mouse_hold_type == IMGUI_MOUSE_BUTTON_NONE;
             PW_ASSERT(valid_state_1 || valid_state_2);
