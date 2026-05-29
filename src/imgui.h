@@ -804,9 +804,14 @@ bool imgui_send_event(imgui_context* ctx, const PWEvent* e)
         // ctx->mouse_right_down_id = 0;
         // ctx->mouse_drag_id       = 0;
 
-        // If the window suddnely looses focus, cancel the drag.
-        ctx->frame.uid_drag_end      = ctx->uid_drag;
-        ctx->frame.uid_drag_over_end = ctx->uid_drag_over;
+        // If the window suddenly looses focus, cancel the drag.
+        // Windows (the OS) may fire duplicate WM_MOUSELEAVE events (translates to PW_EVENT_MOUSE_EXIT)
+        // Most ctx->uid_xxx get cleared to zero below
+        // so we must only set non-zero uids to avoid overwriting values with 0
+        if (ctx->uid_drag != 0)
+            ctx->frame.uid_drag_end = ctx->uid_drag;
+        if (ctx->uid_drag_over != 0)
+            ctx->frame.uid_drag_over_end = ctx->uid_drag_over;
 
         ctx->uid_mouse_over      = 0;
         ctx->uid_mouse_hold      = 0;
