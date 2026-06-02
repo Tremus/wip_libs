@@ -51,6 +51,7 @@ if (WIN32)
 endif()
 
 # https://clang.llvm.org/docs/ClangCommandLineReference.html
+# https://clang.llvm.org/docs/DiagnosticsReference.html
 if (CMAKE_C_COMPILER_ID STREQUAL "Clang" OR CMAKE_C_COMPILER_ID STREQUAL "AppleClang")
     list(APPEND PLUGIN_OPTIONS
         -Werror=absolute-value
