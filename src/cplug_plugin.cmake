@@ -169,7 +169,7 @@ endif()
 function(cplug_configure_info_plist target_name bundle_identifier bundle_type bundle_extension)
     configure_file(
         ${CMAKE_CURRENT_SOURCE_DIR}/modules/CPLUG/example/Info.plist.in
-        ${CMAKE_BINARY_DIR}/${CMAKE_BUILD_TYPE}/${PROJECT_NAME}.${bundle_extension}/Info.plist
+        ${CMAKE_BINARY_DIR}/${CMAKE_BUILD_TYPE}/${PROJECT_NAME}.${bundle_extension}/Contents/Info.plist
         @ONLY
     )
 
@@ -178,7 +178,7 @@ function(cplug_configure_info_plist target_name bundle_identifier bundle_type bu
         MACOSX_BUNDLE TRUE
         OUTPUT_NAME ${PROJECT_NAME}
         BUNDLE_EXTENSION ${bundle_extension}
-        MACOSX_BUNDLE_INFO_PLIST ${CMAKE_BINARY_DIR}/${CMAKE_BUILD_TYPE}/${PROJECT_NAME}.${bundle_extension}/Info.plist
+        MACOSX_BUNDLE_INFO_PLIST ${CMAKE_BINARY_DIR}/${CMAKE_BUILD_TYPE}/${PROJECT_NAME}.${bundle_extension}/Contents/Info.plist
         CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/${CMAKE_BUILD_TYPE}/${PROJECT_NAME}.${bundle_extension}
     )
 endfunction()
