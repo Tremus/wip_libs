@@ -62,17 +62,17 @@ enum // Event flags
     IMGUI_EVENT_MOUSE_HOVER = 1 << 2,
     IMGUI_EVENT_MOUSE_MOVE  = 1 << 3,
 
-    IMGUI_EVENT_MOUSE_LEFT_DOWN = 1 << 4, // For single/multiple clicks acting on mouse down
-    IMGUI_EVENT_MOUSE_LEFT_HOLD = 1 << 5, // For animating widgets while button is held
-    IMGUI_EVENT_MOUSE_LEFT_UP   = 1 << 6, // For single clicks acting on mouse up
+    IMGUI_EVENT_MOUSE_LEFT_DOWN   = 1 << 4, // For single/multiple clicks acting on mouse down
+    IMGUI_EVENT_MOUSE_RIGHT_DOWN  = 1 << 5,
+    IMGUI_EVENT_MOUSE_MIDDLE_DOWN = 1 << 6,
 
-    IMGUI_EVENT_MOUSE_RIGHT_DOWN = 1 << 7,
-    IMGUI_EVENT_MOUSE_RIGHT_HOLD = 1 << 8,
-    IMGUI_EVENT_MOUSE_RIGHT_UP   = 1 << 9,
+    IMGUI_EVENT_MOUSE_LEFT_HOLD   = 1 << 7, // For animating widgets while button is held
+    IMGUI_EVENT_MOUSE_RIGHT_HOLD  = 1 << 8,
+    IMGUI_EVENT_MOUSE_MIDDLE_HOLD = 1 << 9,
 
-    IMGUI_EVENT_MOUSE_MIDDLE_DOWN = 1 << 10,
-    IMGUI_EVENT_MOUSE_MIDDLE_HOLD = 1 << 11,
-    IMGUI_EVENT_MOUSE_MIDDLE_UP   = 1 << 12,
+    IMGUI_EVENT_MOUSE_LEFT_UP   = 1 << 10, // For single clicks acting on mouse up
+    IMGUI_EVENT_MOUSE_RIGHT_UP  = 1 << 11,
+    IMGUI_EVENT_MOUSE_MIDDLE_UP = 1 << 12,
 
     IMGUI_EVENT_MOUSE_WHEEL    = 1 << 13,
     IMGUI_EVENT_TOUCHPAD_BEGIN = 1 << 14, // For MacBooks touchpad
@@ -108,15 +108,15 @@ typedef union ImguiEvents
         unsigned mouse_moved : 1;
 
         unsigned mouse_left_down : 1;
-        unsigned mouse_left_hold : 1;
-        unsigned mouse_left_up : 1;
-
         unsigned mouse_right_down : 1;
-        unsigned mouse_right_hold : 1;
-        unsigned mouse_right_up : 1;
-
         unsigned mouse_middle_down : 1;
+
+        unsigned mouse_left_hold : 1;
+        unsigned mouse_right_hold : 1;
         unsigned mouse_middle_hold : 1;
+
+        unsigned mouse_left_up : 1;
+        unsigned mouse_right_up : 1;
         unsigned mouse_middle_up : 1;
 
         unsigned mouse_wheel : 1;
@@ -529,6 +529,7 @@ unsigned _imgui_get_events(imgui_context* ctx, unsigned uid, bool hover, bool mo
         PW_ASSERT(ctx->frame.type_mouse_down != IMGUI_MOUSE_BUTTON_NONE);
         handle_mouse_down = ctx->frame.type_mouse_down;
     }
+    /*
     switch (handle_mouse_down)
     {
     case IMGUI_MOUSE_BUTTON_NONE:
@@ -543,6 +544,17 @@ unsigned _imgui_get_events(imgui_context* ctx, unsigned uid, bool hover, bool mo
         events |= IMGUI_EVENT_MOUSE_MIDDLE_DOWN;
         break;
     }
+    */
+    // Optimised version of the switch case above
+    events |= (0 - (handle_mouse_down != IMGUI_MOUSE_BUTTON_NONE))         // resolves to 0 or 0xffffffff
+              & ((IMGUI_EVENT_MOUSE_LEFT_DOWN >> 1) << handle_mouse_down); // mask the flag
+
+    // Oh dear, did you change the order of these enums? The bit hacks above depend on that order
+    _Static_assert(IMGUI_MOUSE_BUTTON_LEFT - IMGUI_MOUSE_BUTTON_NONE == 1);
+    _Static_assert(IMGUI_MOUSE_BUTTON_RIGHT - IMGUI_MOUSE_BUTTON_LEFT == 1);
+    _Static_assert(IMGUI_MOUSE_BUTTON_MIDDLE - IMGUI_MOUSE_BUTTON_RIGHT == 1);
+    _Static_assert((IMGUI_EVENT_MOUSE_LEFT_DOWN << 1) == IMGUI_EVENT_MOUSE_RIGHT_DOWN);
+    _Static_assert((IMGUI_EVENT_MOUSE_LEFT_DOWN << 2) == IMGUI_EVENT_MOUSE_MIDDLE_DOWN);
 
     // Drag
     bool is_dragging  = ctx->uid_mouse_hold == uid;
@@ -578,20 +590,24 @@ unsigned _imgui_get_events(imgui_context* ctx, unsigned uid, bool hover, bool mo
         handle_mouse_up = ctx->frame.type_mouse_up;
     }
 
+    /*
     switch (handle_mouse_up)
     {
-    case IMGUI_MOUSE_BUTTON_NONE:
+        case IMGUI_MOUSE_BUTTON_NONE:
         break;
-    case IMGUI_MOUSE_BUTTON_LEFT:
+        case IMGUI_MOUSE_BUTTON_LEFT:
         events |= IMGUI_EVENT_MOUSE_LEFT_UP;
         break;
-    case IMGUI_MOUSE_BUTTON_RIGHT:
+        case IMGUI_MOUSE_BUTTON_RIGHT:
         events |= IMGUI_EVENT_MOUSE_RIGHT_UP;
         break;
-    case IMGUI_MOUSE_BUTTON_MIDDLE:
+        case IMGUI_MOUSE_BUTTON_MIDDLE:
         events |= IMGUI_EVENT_MOUSE_MIDDLE_UP;
         break;
     }
+    */
+    events |= (0 - (handle_mouse_up != IMGUI_MOUSE_BUTTON_NONE))       // resolves to 0 or 0xffffffff
+              & ((IMGUI_EVENT_MOUSE_LEFT_UP >> 1) << handle_mouse_up); // mask the flag
 
     enum ImguiMouseButtonType handle_mouse_hold = IMGUI_MOUSE_BUTTON_NONE;
     if (ctx->uid_mouse_hold == uid)
@@ -599,20 +615,24 @@ unsigned _imgui_get_events(imgui_context* ctx, unsigned uid, bool hover, bool mo
         PW_ASSERT(ctx->mouse_hold_type != IMGUI_MOUSE_BUTTON_NONE);
         handle_mouse_hold = ctx->mouse_hold_type;
     }
+    /*
     switch (handle_mouse_hold)
     {
-    case IMGUI_MOUSE_BUTTON_NONE:
+        case IMGUI_MOUSE_BUTTON_NONE:
         break;
-    case IMGUI_MOUSE_BUTTON_LEFT:
+        case IMGUI_MOUSE_BUTTON_LEFT:
         events |= IMGUI_EVENT_MOUSE_LEFT_HOLD;
         break;
-    case IMGUI_MOUSE_BUTTON_RIGHT:
+        case IMGUI_MOUSE_BUTTON_RIGHT:
         events |= IMGUI_EVENT_MOUSE_RIGHT_HOLD;
         break;
-    case IMGUI_MOUSE_BUTTON_MIDDLE:
+        case IMGUI_MOUSE_BUTTON_MIDDLE:
         events |= IMGUI_EVENT_MOUSE_MIDDLE_HOLD;
         break;
     }
+    */
+    events |= (0 - (handle_mouse_hold != IMGUI_MOUSE_BUTTON_NONE))         // resolves to 0 or 0xffffffff
+              & ((IMGUI_EVENT_MOUSE_LEFT_HOLD >> 1) << handle_mouse_hold); // mask the flag
 
     // Assert valid states
     PW_ASSERT(
