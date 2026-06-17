@@ -101,7 +101,7 @@ XRequestError xrequest(
 #ifdef NDEBUG
 #define XREQ_PRINT(...)
 #else
-#define XREQ_PRINT(fmt, ...) fprintf(stderr, fmt "\n", __VA_ARGS__)
+#define XREQ_PRINT(fmt, ...) fprintf(stderr, fmt "\n", ##__VA_ARGS__)
 #endif
 #endif // XREQ_PRINT
 
