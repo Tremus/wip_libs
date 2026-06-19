@@ -84,6 +84,9 @@ typedef enum XRequestError
     XREQUEST_ERROR_COUNT,
 } XRequestError;
 
+// Easy API
+// Convenience wrapper: performs xrequest_init + xrequest_send + xrequest_deinit in one call.
+// Note: using "Connection: close" in your request is highly recommended for "one-off" requests
 XRequestError xrequest(
     const char*     hostname, // eg. www.google.com
     int             port,     // eg. 80, 443, 3000, 8000, 8080
@@ -91,6 +94,29 @@ XRequestError xrequest(
     unsigned        reqlen,   // eg. strlen(req)
     void*           user,     // ptr passed to callback
     xreq_callback_t cb);      // Callback for receiving HTTP response buffer
+
+// Medium API
+// Opaque context for persistent connections. Full definition is in the implementation block.
+typedef struct XRequestContext XRequestContext;
+
+// Resolves hostname, opens TCP socket, and completes TLS handshake.
+// Returns NULL on failure. On success, call xrequest_send one or more times, then xrequest_deinit.
+XRequestContext* xrequest_init(
+    const char* hostname, // eg. www.google.com
+    int         port);            // eg. 443
+
+// Sends one HTTP request and streams the response via cb.
+// The TLS session remains open; may be called multiple times on the same ctx.
+// Note: using "Connection: keep-alive" is necessary
+XRequestError xrequest_send(
+    XRequestContext* ctx,
+    const char*      req,    // eg. "GET / HTTP/1.1\r\nHost: www.google.com\r\nConnection: keep-alive\r\n\r\n"
+    unsigned         reqlen, // eg. strlen(req)
+    void*            user,   // ptr passed to callback
+    xreq_callback_t  cb);     // Callback for receiving HTTP response buffer
+
+// Sends TLS close_notify, shuts down the socket, and frees ctx.
+void xrequest_deinit(XRequestContext* ctx);
 
 #endif // XHL_REQUEST_H
 
@@ -106,9 +132,109 @@ XRequestError xrequest(
 #endif // XREQ_PRINT
 
 #ifndef XREQ_ASSERT
-#include <assert.h>
-#define XREQ_ASSERT(cond) assert(cond)
+
+#ifdef _WIN32
+#define xrequestbreak() __debugbreak()
+#else
+#define xrequestbreak() __builtin_debugtrap()
 #endif
+
+#ifdef NDEBUG
+#define XREQ_ASSERT(...)
+#else
+static int _xrequest_break_helper = 0;
+#define XREQ_ASSERT(cond) (((cond) ? (void)0 : xrequestbreak()), _xrequest_break_helper += 0)
+// #include <assert.h>
+// #define XREQ_ASSERT(cond) assert(cond)
+#endif
+#endif // !XREQ_ASSERT
+
+#include <stdlib.h>
+#include <string.h>
+
+#ifdef _WIN32
+#define xreq_strnicmp(a, b, n) _strnicmp((a), (b), (n))
+#else
+#define xreq_strnicmp(a, b, n) strncasecmp((a), (b), (n))
+#endif
+
+#define XREQ_HDR_BUF_CAP 8192
+
+// Wraps the caller's callback to detect end-of-response via Content-Length,
+// allowing xrequest_send to stop reading without waiting for the connection to close.
+struct xreq_frame
+{
+    char            hbuf[XREQ_HDR_BUF_CAP]; // raw bytes accumulated until header end is found
+    size_t          hbuf_len;
+    size_t          total_rx;  // total response bytes seen by callback
+    int             hdr_done;  // 1 once \r\n\r\n is located in hbuf
+    long            clen;      // -1 = no Content-Length header; >= 0 once parsed
+    size_t          body_rx;   // body bytes received after the header block
+    int             resp_done; // 1 when body_rx >= clen; caller checks this after XREQUEST_CANCEL
+    void*           real_user;
+    xreq_callback_t real_cb;
+};
+
+static int xreq_frame_cb(void* user, const void* data, unsigned size)
+{
+    struct xreq_frame* f = (struct xreq_frame*)user;
+
+    int ret = f->real_cb(f->real_user, data, size);
+    if (ret != XREQUEST_CONTINUE)
+        return ret;
+
+    if (!data || !size)
+        return XREQUEST_CONTINUE;
+
+    f->total_rx += size;
+
+    if (!f->hdr_done)
+    {
+        size_t avail = XREQ_HDR_BUF_CAP - 1 - f->hbuf_len;
+        size_t copy  = size < avail ? size : avail;
+        memcpy(f->hbuf + f->hbuf_len, data, copy);
+        f->hbuf_len          += copy;
+        f->hbuf[f->hbuf_len]  = '\0';
+
+        char* hend = strstr(f->hbuf, "\r\n\r\n");
+        if (hend)
+        {
+            f->hdr_done     = 1;
+            size_t hdr_size = (size_t)(hend - f->hbuf) + 4;
+            f->body_rx      = f->total_rx - hdr_size;
+
+            // Scan for Content-Length header (case-insensitive)
+            char* p = f->hbuf;
+            while (p < hend)
+            {
+                if (xreq_strnicmp(p, "content-length:", 15) == 0)
+                {
+                    p += 15;
+                    while (*p == ' ' || *p == '\t')
+                        p++;
+                    f->clen = atol(p);
+                    break;
+                }
+                char* nl = (char*)memchr(p, '\n', (size_t)(hend - p));
+                if (!nl)
+                    break;
+                p = nl + 1;
+            }
+        }
+    }
+    else
+    {
+        f->body_rx += size;
+    }
+
+    if (f->hdr_done && f->clen >= 0 && f->body_rx >= (size_t)f->clen)
+    {
+        f->resp_done = 1;
+        return XREQUEST_CANCEL; // signals the recv loop to stop; caller checks resp_done
+    }
+
+    return XREQUEST_CONTINUE;
+}
 
 #ifdef __APPLE__
 #include <Carbon/Carbon.h>
@@ -354,163 +480,202 @@ OSStatus SocketWrite(SSLConnectionRef connection, const void* data, size_t* data
     return ortn;
 }
 
-XRequestError
-xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void* user_ptr, xreq_callback_t cb)
+struct XRequestContext
 {
-    OSStatus           ortn       = noErr;
-    int                sock       = 0;
-    int                open       = 0;
-    struct sockaddr_in addr       = {0};
-    struct hostent*    ent        = NULL;
-    SSLContextRef      ctx        = NULL;
-    SSLProtocol        negVersion = kSSLProtocolUnknown;
-    SSLCipherSuite     negCipher  = SSL_NULL_WITH_NULL_NULL;
+    SSLContextRef ssl;
+    int           sock;
+    int           open;   // 1 after TLS handshake succeeds; used by deinit to call SSLClose
+    int           closed; // 1 when server sent TLS close_notify (session no longer usable)
+};
 
-    // Apparently this is retained, but when I free it, the program errors.
-    // If I don't, the program runs fine...?
-    SecTrustRef trust = NULL; // peer certs macOS 10.6-10.15
+XRequestContext* xrequest_init(const char* hostname, int port)
+{
+    XRequestContext* ctx = (XRequestContext*)calloc(1, sizeof(*ctx));
+    if (!ctx)
+        return NULL;
 
-    // first make sure requested server is there
+    OSStatus           ortn = noErr;
+    struct sockaddr_in addr = {0};
+    struct hostent*    ent  = NULL;
+
     ent = gethostbyname(hostname);
     if (!ent)
     {
         XREQ_PRINT("gethostbyname failed");
-        ortn = ioErr;
+        free(ctx);
+        return NULL;
     }
-    else
-    {
-        memcpy(&addr.sin_addr, ent->h_addr_list[0], sizeof(addr.sin_addr));
 
-        sock          = socket(AF_INET, SOCK_STREAM, 0);
-        addr.sin_port = htons((unsigned short)port);
+    memcpy(&addr.sin_addr, ent->h_addr_list[0], sizeof(addr.sin_addr));
+    ctx->sock       = socket(AF_INET, SOCK_STREAM, 0);
+    addr.sin_port   = htons((unsigned short)port);
+    addr.sin_family = AF_INET;
 
-        addr.sin_family = AF_INET;
-        if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) != 0)
-        {
-            XREQ_PRINT("connect returned error");
-            ortn = ioErr;
-        }
-    }
-    if (ortn)
+    if (connect(ctx->sock, (struct sockaddr*)&addr, sizeof(addr)) != 0)
     {
-        XREQ_PRINT("Failed to make connection with server. Status %d; aborting", ortn);
-        goto cleanup;
+        XREQ_PRINT("connect returned error");
+        close(ctx->sock);
+        free(ctx);
+        return NULL;
     }
+
     XREQ_PRINT("connected to server; starting SecureTransport...");
 
-    // Set up a SecureTransport session.
-    // First the standard calls.
-    ortn = SSLNewContext(false, &ctx);
+    ortn = SSLNewContext(false, &ctx->ssl);
     if (ortn)
     {
         XREQ_PRINT("*** SSLNewContext: %s", sslGetSSLErrString(ortn));
-        goto cleanup;
+        goto fail;
     }
-    ortn = SSLSetIOFuncs(ctx, SocketRead, SocketWrite);
+
+    ortn = SSLSetIOFuncs(ctx->ssl, SocketRead, SocketWrite);
     if (ortn)
     {
         XREQ_PRINT("*** SSLSetIOFuncs: %s", sslGetSSLErrString(ortn));
-        goto cleanup;
+        goto fail;
     }
-    ortn = SSLSetProtocolVersion(ctx, kTLSProtocol12);
+
+    ortn = SSLSetProtocolVersion(ctx->ssl, kTLSProtocol12);
     if (ortn)
     {
         XREQ_PRINT("*** SSLSetProtocolVersion: %s", sslGetSSLErrString(ortn));
-        goto cleanup;
+        goto fail;
     }
-    ortn = SSLSetConnection(ctx, (SSLConnectionRef)(size_t)sock);
+
+    ortn = SSLSetConnection(ctx->ssl, (SSLConnectionRef)(size_t)ctx->sock);
     if (ortn)
     {
         XREQ_PRINT("*** SSLSetConnection: %s", sslGetSSLErrString(ortn));
-        goto cleanup;
+        goto fail;
     }
 
-    // if this isn't set, it isn't checked by APpleX509TP
-    ortn = SSLSetPeerDomainName(ctx, hostname, strlen(hostname) + 1);
+    // if this isn't set, it isn't checked by AppleX509TP
+    ortn = SSLSetPeerDomainName(ctx->ssl, hostname, strlen(hostname) + 1);
     if (ortn)
     {
         XREQ_PRINT("*** SSLSetPeerDomainName: %s", sslGetSSLErrString(ortn));
-        goto cleanup;
+        goto fail;
     }
 
-    ortn = SSLSetEnabledCiphers(ctx, suitesAESGCM, XREQ_ARRLEN(suitesAESGCM));
+    ortn = SSLSetEnabledCiphers(ctx->ssl, suitesAESGCM, XREQ_ARRLEN(suitesAESGCM));
     if (ortn)
     {
         XREQ_PRINT("*** SSLSetEnabledCiphers: %s", sslGetSSLErrString(ortn));
-        goto cleanup;
+        goto fail;
     }
-    // end options
 
     XREQ_PRINT("starting SSL handshake...");
 
     do
     {
-        if (cb(user_ptr, 0, 0) != XREQUEST_CONTINUE)
-        {
-            ortn = errSecUserCanceled;
-            goto cleanup;
-        }
-
-        ortn = SSLHandshake(ctx);
+        ortn = SSLHandshake(ctx->ssl);
     }
     while (ortn == errSSLWouldBlock);
 
-    if (ortn == noErr)
-    {
-        open = 1;
-    }
-    else
+    if (ortn != noErr)
     {
         XREQ_PRINT("***Error SSLHandshake: %s", sslGetSSLErrString(ortn));
-        goto cleanup;
+        goto fail;
+    }
+    ctx->open = 1;
+
+    // Debug info and peer cert inspection
+    {
+        SSLProtocol    negVersion = kSSLProtocolUnknown;
+        SSLCipherSuite negCipher  = SSL_NULL_WITH_NULL_NULL;
+        SecTrustRef    trust      = NULL; // peer certs macOS 10.6-10.15
+
+        // this works even if handshake failed due to cert chain invalid
+        ortn = SSLCopyPeerTrust(ctx->ssl, &trust);
+        if (ortn)
+        {
+            XREQ_PRINT("***Error obtaining peer certs: %s", sslGetSSLErrString(ortn));
+            goto fail;
+        }
+
+        ortn = SSLGetNegotiatedCipher(ctx->ssl, &negCipher);
+        if (ortn)
+        {
+            XREQ_PRINT("***Error SSLGetNegotiatedCipher: %s", sslGetSSLErrString(ortn));
+            goto fail;
+        }
+
+        ortn = SSLGetNegotiatedProtocolVersion(ctx->ssl, &negVersion);
+        if (ortn)
+        {
+            XREQ_PRINT("***Error SSLGetNegotiatedProtocolVersion: %s", sslGetSSLErrString(ortn));
+            goto fail;
+        }
+
+        XREQ_PRINT("");
+        XREQ_PRINT("   Attempted  SSL version : %s", sslGetProtocolVersionString(kTLSProtocol12));
+        XREQ_PRINT("   Negotiated SSL version : %s", sslGetProtocolVersionString(negVersion));
+        XREQ_PRINT("   Negotiated CipherSuite : %s", sslGetCipherSuiteString(negCipher));
+
+        if (trust != NULL)
+        {
+            CFIndex           numCerts = SecTrustGetCertificateCount(trust);
+            CFIndex           i;
+            SecCertificateRef certData;
+            // XREQ_PRINT("   Number of server certs : %ld", numCerts));
+            for (i = 0; i < numCerts; i++)
+            {
+                certData = SecTrustGetCertificateAtIndex(trust, i);
+                CFRelease(certData);
+            }
+            // CFRelease(trust);
+        }
     }
 
-    // this works even if handshake failed due to cert chain invalid
-    trust = NULL;
-    ortn  = SSLCopyPeerTrust(ctx, &trust);
-    if (ortn)
+    XREQ_PRINT("SSL handshake complete.");
+    return ctx;
+
+fail:
+    if (ctx->open)
+        SSLClose(ctx->ssl);
+    if (ctx->sock)
+        close(ctx->sock);
+    if (ctx->ssl)
+        SSLDisposeContext(ctx->ssl);
+    free(ctx);
+    return NULL;
+}
+
+XRequestError xrequest_send(XRequestContext* ctx, const char* req, unsigned reqlen, void* user_ptr, xreq_callback_t cb)
+{
+    if (ctx->closed)
     {
-        XREQ_PRINT("***Error obtaining peer certs: %s", sslGetSSLErrString(ortn));
-        goto cleanup;
+        XREQ_PRINT("xrequest_send: server closed the TLS session after the previous request");
+        return XREQUEST_ERROR_CONNECTION_FAILED;
     }
 
-    ortn = SSLGetNegotiatedCipher(ctx, &negCipher);
-    if (ortn)
-    {
-        XREQ_PRINT("***Error SSLGetNegotiatedCipher: %s", sslGetSSLErrString(ortn));
-        goto cleanup;
-    }
-    ortn = SSLGetNegotiatedProtocolVersion(ctx, &negVersion);
-    if (ortn)
-    {
-        XREQ_PRINT("***Error SSLGetNegotiatedProtocolVersion: %s", sslGetSSLErrString(ortn));
-        goto cleanup;
-    }
+    OSStatus          ortn  = noErr;
+    struct xreq_frame frame = {0};
+    frame.real_cb           = cb;
+    frame.real_user         = user_ptr;
+    frame.clen              = -1;
 
-    if (cb(user_ptr, 0, 0) != XREQUEST_CONTINUE)
-    {
-        ortn = errSecUserCanceled;
-        goto cleanup;
-    }
+    if (xreq_frame_cb(&frame, NULL, 0) != XREQUEST_CONTINUE)
+        return XREQUEST_ERROR_USER_CANCELLED;
 
     XREQ_PRINT("SSL handshake complete; Sending request message...");
     {
         size_t nprocessed;
-        ortn = SSLWrite(ctx, req, reqlen, &nprocessed);
+        ortn = SSLWrite(ctx->ssl, req, reqlen, &nprocessed);
     }
     if (ortn)
     {
         XREQ_PRINT("***Error SSLWrite: %s", sslGetSSLErrString(ortn));
-        goto cleanup;
+        goto done;
     }
 
-    if (cb(user_ptr, 0, 0) != XREQUEST_CONTINUE)
+    if (xreq_frame_cb(&frame, NULL, 0) != XREQUEST_CONTINUE)
     {
         ortn = errSecUserCanceled;
-        goto cleanup;
+        goto done;
     }
 
-    XREQ_PRINT("SSL write complete complete; Receiving response...");
+    XREQ_PRINT("SSL write complete; Receiving response...");
     {
         uint8  resbuf[4096]; // decrypted response
         size_t resbuflen;
@@ -520,13 +685,13 @@ xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void*
             resbuflen = 0;
             avail     = 0;
 
-            ortn = SSLGetBufferedReadSize(ctx, &avail);
+            ortn = SSLGetBufferedReadSize(ctx->ssl, &avail);
             if (ortn)
             {
                 XREQ_PRINT("***Error SSLGetBufferedReadSize: %s", sslGetSSLErrString(ortn));
                 break;
             }
-            ortn = SSLRead(ctx, resbuf, sizeof(resbuf), &resbuflen);
+            ortn = SSLRead(ctx->ssl, resbuf, sizeof(resbuf), &resbuflen);
 
             // we expect blocking, not an error
             if (ortn == errSSLWouldBlock)
@@ -551,7 +716,7 @@ xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void*
 
             if (resbuflen > 0)
             {
-                int should_continue = cb(user_ptr, resbuf, resbuflen);
+                int should_continue = xreq_frame_cb(&frame, resbuf, resbuflen);
                 if (should_continue != XREQUEST_CONTINUE)
                     ortn = errSecUserCanceled;
             }
@@ -560,52 +725,29 @@ xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void*
     // connection closed by server or by error
     XREQ_PRINT("\nFinished SSLRead with OSStatus %s, errno: %d", sslGetSSLErrString(ortn), errno);
 
-cleanup:
+done:
     if (ortn == errSSLClosedGraceful)
-        ortn = noErr;
+    {
+        ctx->closed = 1; // server sent close_notify; session cannot be reused
+        ortn        = noErr;
+    }
     if (ortn == errSecUserCanceled)
-        ortn = noErr;
+    {
+        if (frame.resp_done)
+            return XREQUEST_ERROR_NONE;
+        return XREQUEST_ERROR_USER_CANCELLED;
+    }
+
     XREQ_ASSERT(ortn == noErr);
     if (ortn != noErr)
         XREQ_PRINT("[TLS] WARNING: Finished with code %d", ortn);
 
-    if (open)
-        SSLClose(ctx);
-    if (sock)
-        close(sock);
-    if (ctx)
-        SSLDisposeContext(ctx);
-
-    XREQ_PRINT("");
-    XREQ_PRINT("   Attempted  SSL version : %s", sslGetProtocolVersionString(kTLSProtocol12));
-    XREQ_PRINT("   Result                 : %s", sslGetSSLErrString(ortn));
-    XREQ_PRINT("   Negotiated SSL version : %s", sslGetProtocolVersionString(negVersion));
-    XREQ_PRINT("   Negotiated CipherSuite : %s", sslGetCipherSuiteString(negCipher));
-
-    if (trust != NULL)
-    {
-        CFIndex           numCerts;
-        CFIndex           i;
-        SecCertificateRef certData;
-        numCerts = SecTrustGetCertificateCount(trust);
-        // XREQ_PRINT("   Number of server certs : %ld", numCerts));
-        for (i = 0; i < numCerts; i++)
-        {
-            certData = SecTrustGetCertificateAtIndex(trust, i);
-            CFRelease(certData);
-        }
-        // CFRelease(trust);
-    }
-
     switch (ortn)
     {
     case noErr:
-    case errSSLClosedGraceful:
         return XREQUEST_ERROR_NONE;
     case ioErr:
         return XREQUEST_ERROR_CONNECTION_FAILED;
-    case errSecUserCanceled:
-        return XREQUEST_ERROR_USER_CANCELLED;
     case errSSLClosedAbort:
     case memFullErr:
     case paramErr:
@@ -632,6 +774,31 @@ cleanup:
         return XREQUEST_ERROR_UNKNOWN;
     }
 }
+
+void xrequest_deinit(XRequestContext* ctx)
+{
+    if (!ctx)
+        return;
+    if (ctx->open)
+        SSLClose(ctx->ssl);
+    if (ctx->sock)
+        close(ctx->sock);
+    if (ctx->ssl)
+        SSLDisposeContext(ctx->ssl);
+    free(ctx);
+}
+
+XRequestError
+xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void* user_ptr, xreq_callback_t cb)
+{
+    XRequestContext* ctx = xrequest_init(hostname, port);
+    if (!ctx)
+        return XREQUEST_ERROR_CONNECTION_FAILED;
+    XRequestError err = xrequest_send(ctx, req, reqlen, user_ptr, cb);
+    xrequest_deinit(ctx);
+    return err;
+}
+
 #endif // __APPLE__
 
 #ifdef _WIN32
@@ -727,7 +894,7 @@ const char* tls_state_string(TLS_State state)
 }
 #endif // NDEBUG
 
-typedef struct TLS_Context
+struct XRequestContext
 {
     TLS_State state; // Current state of the connection. Negative values are errors.
 
@@ -740,7 +907,10 @@ typedef struct TLS_Context
 
     int  received; // Byte count in incoming buffer (ciphertext).
     char incoming[TLS_MAX_PACKET_SIZE];
-} TLS_Context;
+};
+
+// Internal alias so helper functions keep their original parameter types.
+typedef struct XRequestContext TLS_Context;
 
 // Called in a poll-style manner on Windows.
 static void xrequest_recv(TLS_Context* ctx)
@@ -783,16 +953,19 @@ static void xrequest_recv(TLS_Context* ctx)
     }
 }
 
-XRequestError xrequest_connect(TLS_Context* ctx, const char* hostname, int port, void* userptr, xreq_callback_t cb)
+XRequestContext* xrequest_init(const char* hostname, int port)
 {
-    XRequestError err = 0;
-    int           NumChars;
-    WCHAR         HostName[64];
-    NumChars = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, hostname, -1, HostName, ARRAYSIZE(HostName));
+    XRequestContext* ctx = (XRequestContext*)calloc(1, sizeof(*ctx));
+    if (!ctx)
+        return NULL;
+    ctx->sock = INVALID_SOCKET;
+
+    WCHAR HostName[64];
+    int   NumChars = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, hostname, -1, HostName, ARRAYSIZE(HostName));
     if (NumChars == 0)
     {
         XREQ_PRINT("[TLS] Error - Failed converting hostname to UTF16");
-        return XREQUEST_ERROR_UNKNOWN;
+        goto fail;
     }
 
     // Initialize winsock.
@@ -805,7 +978,7 @@ XRequestError xrequest_connect(TLS_Context* ctx, const char* hostname, int port,
         if (iResult)
         {
             XREQ_PRINT("[TLS] Error - WSAStartup returned code %d", iResult);
-            return XREQUEST_ERROR_CONNECTION_FAILED;
+            goto fail;
         }
     }
 
@@ -827,22 +1000,19 @@ XRequestError xrequest_connect(TLS_Context* ctx, const char* hostname, int port,
         if (SocketError)
         {
             XREQ_PRINT("[TLS] Error - getaddrinfo returned: %d", SocketError);
-            return XREQUEST_ERROR_CONNECTION_FAILED;
+            goto fail;
         }
     }
-
-    if (cb(userptr, 0, 0) != XREQUEST_CONTINUE)
-        return XREQUEST_ERROR_USER_CANCELLED;
 
     // Create a TCP IPv4 socket.
     // https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-socket
     ctx->sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (ctx->sock == (SOCKET)-1)
+    if (ctx->sock == INVALID_SOCKET)
     {
         int error = WSAGetLastError();
-        XREQ_ASSERT(ctx->sock != -1);
+        XREQ_ASSERT(ctx->sock != INVALID_SOCKET);
         XREQ_PRINT("[TLS] Error - socket returned: %d", error);
-        return XREQUEST_ERROR_CONNECTION_FAILED;
+        goto fail;
     }
 
     // Set non-blocking IO.
@@ -855,51 +1025,51 @@ XRequestError xrequest_connect(TLS_Context* ctx, const char* hostname, int port,
         {
             int error = WSAGetLastError();
             XREQ_PRINT("[TLS] Error - ioctlsocket returned: %d", error);
-            return XREQUEST_ERROR_CONNECTION_FAILED;
+            goto fail;
         }
     }
 
     // Startup the TCP connection.
     // https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-connect
-    err = connect(ctx->sock, ctx->AddrInfo->ai_addr, (int)ctx->AddrInfo->ai_addrlen);
-    XREQ_ASSERT(err == 0);
-    if (err == SOCKET_ERROR)
     {
-        int error = WSAGetLastError();
-        if (error != WSAEWOULDBLOCK && error != WSAEINPROGRESS)
+        int err = connect(ctx->sock, ctx->AddrInfo->ai_addr, (int)ctx->AddrInfo->ai_addrlen);
+        XREQ_ASSERT(err == 0);
+        if (err == SOCKET_ERROR)
         {
-            err = 1;
-            XREQ_PRINT("[TLS] Error - connect returned: %d", error);
-            ctx->state = TLS_STATE_INVALID_SOCKET;
-            return XREQUEST_ERROR_CONNECTION_FAILED;
+            int error = WSAGetLastError();
+            if (error != WSAEWOULDBLOCK && error != WSAEINPROGRESS)
+            {
+                XREQ_PRINT("[TLS] Error - connect returned: %d", error);
+                ctx->state = TLS_STATE_INVALID_SOCKET;
+                goto fail;
+            }
         }
     }
-
-    if (cb(userptr, 0, 0) != XREQUEST_CONTINUE)
-        return XREQUEST_ERROR_USER_CANCELLED;
 
     ctx->state = TLS_STATE_PENDING;
 
     // Initialize a credentials handle for Secure Channel.
     // This is needed for InitializeSecurityContextA.
-    SCHANNEL_CRED cred = {0};
-    cred.dwVersion     = SCHANNEL_CRED_VERSION;
-    cred.dwFlags       = SCH_USE_STRONG_CRYPTO     // Disable deprecated or otherwise weak algorithms (on as default).
-                   | SCH_CRED_AUTO_CRED_VALIDATION // Automatically validate server cert (on as default), as opposed
-                                                   // to manual verify.
-                   | SCH_CRED_NO_DEFAULT_CREDS;    // Client certs are not supported.
-    cred.grbitEnabledProtocols = SP_PROT_TLS1_2;   // Specifically pick only TLS 1.2.
-
-    err = AcquireCredentialsHandleW(0, UNISP_NAME_W, SECPKG_CRED_OUTBOUND, 0, &cred, 0, 0, &ctx->handle, 0);
-    XREQ_ASSERT(err == 0);
-    if (err != SEC_E_OK)
     {
-        XREQ_PRINT("[TLS] Error - AcquireCredentialsHandleA: %d", err);
-        return err;
+        SCHANNEL_CRED cred = {0};
+        cred.dwVersion     = SCHANNEL_CRED_VERSION;
+        cred.dwFlags       = SCH_USE_STRONG_CRYPTO // Disable deprecated or otherwise weak algorithms (on as default).
+                       | SCH_CRED_AUTO_CRED_VALIDATION // Automatically validate server cert (on as default), as opposed
+                                                       // to manual verify.
+                       | SCH_CRED_NO_DEFAULT_CREDS;    // Client certs are not supported.
+        cred.grbitEnabledProtocols = SP_PROT_TLS1_2;   // Specifically pick only TLS 1.2.
+
+        int err = AcquireCredentialsHandleW(0, UNISP_NAME_W, SECPKG_CRED_OUTBOUND, 0, &cred, 0, 0, &ctx->handle, 0);
+        XREQ_ASSERT(err == 0);
+        if (err != SEC_E_OK)
+        {
+            XREQ_PRINT("[TLS] Error - AcquireCredentialsHandleA: %d", err);
+            goto fail;
+        }
     }
 
     // Wait for TCP to connect.
-    while (err == XREQUEST_ERROR_NONE)
+    while (1)
     {
         // https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-select
         fd_set sockets_to_check;
@@ -909,8 +1079,7 @@ XRequestError xrequest_connect(TLS_Context* ctx, const char* hostname, int port,
         int iResult = select((int)(ctx->sock + 1), NULL, &sockets_to_check, NULL, NULL);
         if (iResult == SOCKET_ERROR)
         {
-            err = XREQUEST_ERROR_UNKNOWN;
-            break;
+            goto fail;
         }
         if (iResult == 0)
         {
@@ -925,162 +1094,177 @@ XRequestError xrequest_connect(TLS_Context* ctx, const char* hostname, int port,
         }
     }
 
-    bool first_call = true;
-
-    while (ctx->state == TLS_STATE_PENDING)
+    // TLS handshake
     {
-        if (cb(userptr, 0, 0) != XREQUEST_CONTINUE)
-            return XREQUEST_ERROR_USER_CANCELLED;
+        bool first_call = true;
 
-        // TLS handshake algorithm.
-        // 1. Call InitializeSecurityContext.
-        //    The first call creates a security context.
-        //    Subsequent calls update the security context.
-        // 2. Check InitializeSecurityContext's return value.
-        //    SEC_E_OK                     - Handshake completed, TLS tunnel ready to go.
-        //    SEC_I_INCOMPLETE_CREDENTIALS - The server asked for client certs (not supported).
-        //    SEC_I_CONTINUE_NEEDED        - Success, keep calling InitializeSecurityContext (and send).
-        //    SEC_E_INCOMPLETE_MESSAGE     - Success, continue reading data from the server (recv).
-        // 3. Otherwise an error may have been encountered. Set an error state and return.
-        // 4. Read data from the server (recv).
-
-        // 1. Call InitializeSecurityContext.
-        if (first_call || ctx->received)
+        while (ctx->state == TLS_STATE_PENDING)
         {
-            SecBuffer inbuffers[2]  = {0};
-            inbuffers[0].BufferType = SECBUFFER_TOKEN;
-            inbuffers[0].pvBuffer   = ctx->incoming;
-            inbuffers[0].cbBuffer   = ctx->received;
-            inbuffers[1].BufferType = SECBUFFER_EMPTY;
-
-            SecBuffer outbuffers[1]  = {0};
-            outbuffers[0].BufferType = SECBUFFER_TOKEN;
-
-            SecBufferDesc indesc  = {SECBUFFER_VERSION, ARRAYSIZE(inbuffers), inbuffers};
-            SecBufferDesc outdesc = {SECBUFFER_VERSION, ARRAYSIZE(outbuffers), outbuffers};
-
-            DWORD flags = ISC_REQ_USE_SUPPLIED_CREDS | ISC_REQ_ALLOCATE_MEMORY | ISC_REQ_CONFIDENTIALITY |
-                          ISC_REQ_REPLAY_DETECT | ISC_REQ_SEQUENCE_DETECT | ISC_REQ_STREAM;
-
-            // https://learn.microsoft.com/en-us/windows/win32/api/sspi/nf-sspi-initializesecuritycontextw
-            SECURITY_STATUS sec = InitializeSecurityContextW(
-                &ctx->handle,
-                first_call ? NULL : &ctx->context,
-                first_call ? HostName : NULL,
-                flags,
-                0,
-                0,
-                first_call ? NULL : &indesc,
-                0,
-                first_call ? &ctx->context : NULL,
-                &outdesc,
-                &flags,
-                NULL);
-
-            // After the first call we are supposed to re-use the same context.
-            first_call = false;
-
-            // Fetch incoming data.
-            if (inbuffers[1].BufferType == SECBUFFER_EXTRA)
-            {
-                memmove(ctx->incoming, ctx->incoming + (ctx->received - inbuffers[1].cbBuffer), inbuffers[1].cbBuffer);
-                ctx->received = inbuffers[1].cbBuffer;
-            }
-            else if (inbuffers[1].BufferType != SECBUFFER_MISSING)
-            {
-                ctx->received = 0;
-            }
-
+            // TLS handshake algorithm.
+            // 1. Call InitializeSecurityContext.
+            //    The first call creates a security context.
+            //    Subsequent calls update the security context.
             // 2. Check InitializeSecurityContext's return value.
-            if (sec == SEC_E_OK)
+            //    SEC_E_OK                     - Handshake completed, TLS tunnel ready to go.
+            //    SEC_I_INCOMPLETE_CREDENTIALS - The server asked for client certs (not supported).
+            //    SEC_I_CONTINUE_NEEDED        - Success, keep calling InitializeSecurityContext (and send).
+            //    SEC_E_INCOMPLETE_MESSAGE     - Success, continue reading data from the server (recv).
+            // 3. Otherwise an error may have been encountered. Set an error state and return.
+            // 4. Read data from the server (recv).
+
+            // 1. Call InitializeSecurityContext.
+            if (first_call || ctx->received)
             {
-                // Successfully completed handshake. TLS tunnel is now operational.
-                QueryContextAttributesW(&ctx->context, SECPKG_ATTR_STREAM_SIZES, &ctx->sizes);
-                ctx->state = TLS_STATE_CONNECTED;
-                break;
-            }
-            else if (sec == SEC_I_CONTINUE_NEEDED)
-            {
-                // Continue sending data to the server.
-                char* buffer = (char*)outbuffers[0].pvBuffer;
-                int   size   = outbuffers[0].cbBuffer;
-                while (size != 0)
+                SecBuffer inbuffers[2]  = {0};
+                inbuffers[0].BufferType = SECBUFFER_TOKEN;
+                inbuffers[0].pvBuffer   = ctx->incoming;
+                inbuffers[0].cbBuffer   = ctx->received;
+                inbuffers[1].BufferType = SECBUFFER_EMPTY;
+
+                SecBuffer outbuffers[1]  = {0};
+                outbuffers[0].BufferType = SECBUFFER_TOKEN;
+
+                SecBufferDesc indesc  = {SECBUFFER_VERSION, ARRAYSIZE(inbuffers), inbuffers};
+                SecBufferDesc outdesc = {SECBUFFER_VERSION, ARRAYSIZE(outbuffers), outbuffers};
+
+                DWORD flags = ISC_REQ_USE_SUPPLIED_CREDS | ISC_REQ_ALLOCATE_MEMORY | ISC_REQ_CONFIDENTIALITY |
+                              ISC_REQ_REPLAY_DETECT | ISC_REQ_SEQUENCE_DETECT | ISC_REQ_STREAM;
+
+                // https://learn.microsoft.com/en-us/windows/win32/api/sspi/nf-sspi-initializesecuritycontextw
+                SECURITY_STATUS sec = InitializeSecurityContextW(
+                    &ctx->handle,
+                    first_call ? NULL : &ctx->context,
+                    first_call ? HostName : NULL,
+                    flags,
+                    0,
+                    0,
+                    first_call ? NULL : &indesc,
+                    0,
+                    first_call ? &ctx->context : NULL,
+                    &outdesc,
+                    &flags,
+                    NULL);
+
+                // After the first call we are supposed to re-use the same context.
+                first_call = false;
+
+                // Fetch incoming data.
+                if (inbuffers[1].BufferType == SECBUFFER_EXTRA)
                 {
-                    int d = send(ctx->sock, buffer, size, 0);
-                    if (d <= 0)
-                    {
-                        break;
-                    }
-                    size   -= d;
-                    buffer += d;
+                    memmove(
+                        ctx->incoming,
+                        ctx->incoming + (ctx->received - inbuffers[1].cbBuffer),
+                        inbuffers[1].cbBuffer);
+                    ctx->received = inbuffers[1].cbBuffer;
                 }
-                FreeContextBuffer(outbuffers[0].pvBuffer);
-                if (size != 0)
+                else if (inbuffers[1].BufferType != SECBUFFER_MISSING)
                 {
-                    // Somehow failed to send() data to server.
-                    ctx->state = TLS_STATE_UNKNOWN_ERROR;
+                    ctx->received = 0;
+                }
+
+                // 2. Check InitializeSecurityContext's return value.
+                if (sec == SEC_E_OK)
+                {
+                    // Successfully completed handshake. TLS tunnel is now operational.
+                    QueryContextAttributesW(&ctx->context, SECPKG_ATTR_STREAM_SIZES, &ctx->sizes);
+                    ctx->state = TLS_STATE_CONNECTED;
                     break;
                 }
-            }
-            else if (sec != SEC_E_INCOMPLETE_MESSAGE)
-            {
-                if (sec == SEC_E_CERT_EXPIRED)
-                    ctx->state = TLS_STATE_CERTIFICATE_EXPIRED;
-                else if (sec == SEC_E_WRONG_PRINCIPAL)
-                    ctx->state = TLS_STATE_BAD_HOSTNAME;
-                else if (sec == SEC_E_UNTRUSTED_ROOT)
-                    ctx->state = TLS_STATE_CANNOT_VERIFY_CA_CHAIN;
-                else if (sec == SEC_E_ILLEGAL_MESSAGE || sec == SEC_E_ALGORITHM_MISMATCH)
-                    ctx->state = TLS_STATE_NO_MATCHING_ENCRYPTION_ALGORITHMS;
-                else if (sec == SEC_I_INCOMPLETE_CREDENTIALS)
-                    ctx->state = TLS_STATE_SERVER_ASKED_FOR_CLIENT_CERTS; // Client certs are not supported.
-                else if (sec == SEC_E_INVALID_TOKEN)
-                    ctx->state = TLS_STATE_INVALID_TOKEN;
+                else if (sec == SEC_I_CONTINUE_NEEDED)
+                {
+                    // Continue sending data to the server.
+                    char* buffer = (char*)outbuffers[0].pvBuffer;
+                    int   size   = outbuffers[0].cbBuffer;
+                    while (size != 0)
+                    {
+                        int d = send(ctx->sock, buffer, size, 0);
+                        if (d <= 0)
+                        {
+                            break;
+                        }
+                        size   -= d;
+                        buffer += d;
+                    }
+                    FreeContextBuffer(outbuffers[0].pvBuffer);
+                    if (size != 0)
+                    {
+                        // Somehow failed to send() data to server.
+                        ctx->state = TLS_STATE_UNKNOWN_ERROR;
+                        break;
+                    }
+                }
+                else if (sec != SEC_E_INCOMPLETE_MESSAGE)
+                {
+                    if (sec == SEC_E_CERT_EXPIRED)
+                        ctx->state = TLS_STATE_CERTIFICATE_EXPIRED;
+                    else if (sec == SEC_E_WRONG_PRINCIPAL)
+                        ctx->state = TLS_STATE_BAD_HOSTNAME;
+                    else if (sec == SEC_E_UNTRUSTED_ROOT)
+                        ctx->state = TLS_STATE_CANNOT_VERIFY_CA_CHAIN;
+                    else if (sec == SEC_E_ILLEGAL_MESSAGE || sec == SEC_E_ALGORITHM_MISMATCH)
+                        ctx->state = TLS_STATE_NO_MATCHING_ENCRYPTION_ALGORITHMS;
+                    else if (sec == SEC_I_INCOMPLETE_CREDENTIALS)
+                        ctx->state = TLS_STATE_SERVER_ASKED_FOR_CLIENT_CERTS; // Client certs are not supported.
+                    else if (sec == SEC_E_INVALID_TOKEN)
+                        ctx->state = TLS_STATE_INVALID_TOKEN;
+                    else
+                        ctx->state = TLS_STATE_UNKNOWN_ERROR;
+                    break;
+                }
                 else
-                    ctx->state = TLS_STATE_UNKNOWN_ERROR;
+                {
+                    XREQ_ASSERT(sec == SEC_E_INCOMPLETE_MESSAGE);
+                    // Need to read more bytes.
+                }
+            }
+
+            if (ctx->received == sizeof(ctx->incoming))
+            {
+                // Server is sending too much data instead of proper handshake?
+                ctx->state = TLS_STATE_UNKNOWN_ERROR;
                 break;
             }
-            else
-            {
-                XREQ_ASSERT(sec == SEC_E_INCOMPLETE_MESSAGE);
-                // Need to read more bytes.
-            }
-        }
 
-        if (ctx->received == sizeof(ctx->incoming))
-        {
-            // Server is sending too much data instead of proper handshake?
-            ctx->state = TLS_STATE_UNKNOWN_ERROR;
-            break;
+            // 4. Read data from the server (recv).
+            XREQ_ASSERT(ctx->state == TLS_STATE_PENDING);
+            xrequest_recv(ctx);
         }
-
-        // 4. Read data from the server (recv).
-        XREQ_ASSERT(ctx->state == TLS_STATE_PENDING);
-        xrequest_recv(ctx);
     }
 
-    return err;
+    if (ctx->state != TLS_STATE_CONNECTED)
+        goto fail;
+
+    XREQ_PRINT("Connected to %s!", hostname);
+    return ctx;
+
+fail:
+    if (ctx->AddrInfo)
+        FreeAddrInfoW(ctx->AddrInfo);
+    if (ctx->sock != INVALID_SOCKET)
+        closesocket(ctx->sock);
+    if (ctx->context.dwLower || ctx->context.dwUpper)
+        DeleteSecurityContext(&ctx->context);
+    if (ctx->handle.dwLower || ctx->handle.dwUpper)
+        FreeCredentialsHandle(&ctx->handle);
+    free(ctx);
+    return NULL;
 }
 
-XRequestError
-xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void* user_ptr, xreq_callback_t cb)
+XRequestError xrequest_send(XRequestContext* ctx, const char* req, unsigned reqlen, void* user_ptr, xreq_callback_t cb)
 {
     XRequestError err = XREQUEST_ERROR_NONE;
-    TLS_Context*  ctx = calloc(1, sizeof(*ctx));
-
-    err = xrequest_connect(ctx, hostname, port, user_ptr, cb);
-    if (err != XREQUEST_ERROR_NONE)
-        goto disconnect;
-
-    XREQ_ASSERT(ctx->state == TLS_STATE_CONNECTED);
 
     if (ctx->state != TLS_STATE_CONNECTED)
     {
-        XREQ_PRINT("Error connecting to to %s with code %s.", hostname, tls_state_string(ctx->state));
-        goto disconnect;
+        XREQ_PRINT("xrequest_send: session not usable (state %s)", tls_state_string(ctx->state));
+        return XREQUEST_ERROR_CONNECTION_FAILED;
     }
 
-    XREQ_PRINT("Connected to %s!", hostname);
+    struct xreq_frame frame = {0};
+    frame.real_cb           = cb;
+    frame.real_user         = user_ptr;
+    frame.clen              = -1;
+
     XREQ_PRINT("Sending HTTP request");
 
     // Send request.
@@ -1149,15 +1333,15 @@ xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void*
         if (err != XREQUEST_ERROR_NONE)
         {
             XREQ_PRINT("Failed to send request.");
-            goto disconnect;
+            return err;
         }
     }
 
     XREQ_PRINT("Receiving HTTP response");
     // Write the full HTTP response to file.
-    while (ctx->state == TLS_STATE_CONNECTED && err == XREQUEST_ERROR_NONE)
+    while (ctx->state == TLS_STATE_CONNECTED && err == XREQUEST_ERROR_NONE && !frame.resp_done)
     {
-        // Read ciphertext data data from the TCP socket.
+        // Read ciphertext data from the TCP socket.
         xrequest_recv(ctx);
 
         // Buffer may be full
@@ -1207,17 +1391,19 @@ xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void*
                 // Consume decrypted buffer
                 if (decrypted)
                 {
-                    int cb_retcode = cb(user_ptr, decrypted, size);
-                    if (cb_retcode != XREQUEST_CONTINUE)
-                    {
-                        err = XREQUEST_ERROR_USER_CANCELLED;
-                        XREQ_PRINT("Cancelled");
-                        break;
-                    }
+                    int cb_retcode = xreq_frame_cb(&frame, decrypted, size);
 
                     // Remove ciphertext from incoming buffer so next time it starts from beginning.
                     memmove(ctx->incoming, ctx->incoming + used, ctx->received - used);
                     ctx->received -= used;
+
+                    if (cb_retcode != XREQUEST_CONTINUE)
+                    {
+                        err = frame.resp_done ? XREQUEST_ERROR_NONE : XREQUEST_ERROR_USER_CANCELLED;
+                        if (!frame.resp_done)
+                            XREQ_PRINT("Cancelled");
+                        break;
+                    }
                 }
             }
 
@@ -1239,6 +1425,13 @@ xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void*
                 ctx->state    = TLS_STATE_UNKNOWN_ERROR;
                 ctx->received = 0;
             }
+            else if (sec == SEC_E_DECRYPT_FAILURE)
+            {
+                // This error may happen if you've called DecryptMessage() one too many times, and now the context has
+                // gotten into an invalid state...
+                err        = XREQUEST_ERROR_UNKNOWN;
+                ctx->state = TLS_STATE_UNKNOWN_ERROR;
+            }
             else if (sec != SEC_E_OK)
             {
                 XREQ_PRINT("[TLS] WARNING: DecryptMessage returned unkown code %ld", sec);
@@ -1253,7 +1446,14 @@ xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void*
     // After the server disconnects, there may be lots of remaining data to process
     XREQ_PRINT("State %s", tls_state_string(ctx->state));
 
-disconnect:
+    return err;
+}
+
+void xrequest_deinit(XRequestContext* ctx)
+{
+    if (!ctx)
+        return;
+
     if (ctx->state >= 0)
     {
         DWORD type = SCHANNEL_SHUTDOWN;
@@ -1298,11 +1498,13 @@ disconnect:
             }
             FreeContextBuffer(outbuffers[0].pvBuffer);
         }
-        shutdown(ctx->sock, SD_BOTH);
+        if (ctx->sock != INVALID_SOCKET)
+            shutdown(ctx->sock, SD_BOTH);
     }
+
     if (ctx->AddrInfo)
         FreeAddrInfoW(ctx->AddrInfo);
-    if (ctx->sock != 0 && ctx->sock != (SOCKET)-1ull)
+    if (ctx->sock != INVALID_SOCKET)
         closesocket(ctx->sock);
     if (ctx->context.dwLower || ctx->context.dwUpper)
         DeleteSecurityContext(&ctx->context);
@@ -1310,9 +1512,19 @@ disconnect:
         FreeCredentialsHandle(&ctx->handle);
 
     free(ctx);
+}
 
+XRequestError
+xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void* user_ptr, xreq_callback_t cb)
+{
+    XRequestContext* ctx = xrequest_init(hostname, port);
+    if (ctx == NULL)
+        return XREQUEST_ERROR_CONNECTION_FAILED;
+    XRequestError err = xrequest_send(ctx, req, reqlen, user_ptr, cb);
+    xrequest_deinit(ctx);
     return err;
 }
+
 #endif // _WIN32
 
 #endif // XHL_REQUEST_IMPL
