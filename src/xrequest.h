@@ -721,7 +721,7 @@ XRequestError xrequest_send(XRequestContext* ctx, const char* req, unsigned reql
                     FD_ZERO(&fds);
                     FD_SET(ctx->sock, &fds);
                     tv.tv_sec  = 0;
-                    tv.tv_usec = 100000;
+                    tv.tv_usec = XREQ_POLL_FREQUENCY_MS * 1000;
                     int ready  = select(ctx->sock + 1, &fds, NULL, NULL, &tv);
                     if (ready > 0)
                     {
@@ -993,7 +993,7 @@ static void xrequest_recv(TLS_Context* ctx)
         FD_ZERO(&sockets_to_check);
         FD_SET(ctx->sock, &sockets_to_check);
         timeout.tv_sec  = 0;
-        timeout.tv_usec = 100000;
+        timeout.tv_usec = XREQ_POLL_FREQUENCY_MS * 1000;
         int ready       = select((int)(ctx->sock + 1), &sockets_to_check, NULL, NULL, &timeout);
         if (ready == SOCKET_ERROR)
         {
@@ -1148,7 +1148,7 @@ XRequestContext* xrequest_init(const char* hostname, int port, void* user, xreq_
             FD_ZERO(&sockets_to_check);
             FD_SET(ctx->sock, &sockets_to_check);
             timeout.tv_sec  = 0;
-            timeout.tv_usec = 100000;
+            timeout.tv_usec = XREQ_POLL_FREQUENCY_MS * 1000;
             int iResult     = select((int)(ctx->sock + 1), NULL, &sockets_to_check, NULL, &timeout);
             if (iResult == SOCKET_ERROR)
                 goto fail;
