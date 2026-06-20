@@ -62,17 +62,17 @@ Windows: 8.1+
 macOS: 10.2+
 */
 
-enum
+typedef enum XRequestCallbackResult
 {
     XREQUEST_CONTINUE = 0,
     XREQUEST_CANCEL   = 1,
-};
+} XRequestCallbackResult;
 
 // Callback gets called repeatedly, sometimes with no data
 // Return XREQUEST_CONTINUE to continue
-// Return XREQUEST_CANCEL or anything non zero to cancel request/response and exit early
+// Return XREQUEST_CANCEL to cancel request/response and exit early
 // If both 'data' and 'size' are non zero, you may copy 'size' bytes from 'data' into your own response buffer
-typedef int (*xreq_callback_t)(
+typedef XRequestCallbackResult (*xreq_callback_t)(
     void*       user,
     const void* data, // May be NULL
     unsigned    size  // May be zero
@@ -175,51 +175,44 @@ static int _xrequest_break_helper = 0;
 #define XREQ_HDR_BUF_CAP 8192
 #endif
 
-// Wraps the caller's callback to detect end-of-response via Content-Length,
-// allowing xrequest_send to stop reading without waiting for the connection to close.
-struct xreq_frame
+// Tracks response progress for Content-Length-based early termination.
+// Returns XREQUEST_CANCEL (and sets response_done) once the full body has been received.
+typedef struct XRequestSendContext
 {
-    char            hbuf[XREQ_HDR_BUF_CAP]; // raw bytes accumulated until header end is found
-    size_t          hbuf_len;
-    size_t          total_rx;       // total response bytes seen by callback
-    ptrdiff_t       content_length; // -1 = no Content-Length header; >= 0 once parsed
-    size_t          body_rx;        // body bytes received after the header block
-    int             hdr_done;       // 1 once \r\n\r\n is located in hbuf
-    int             resp_done;      // 1 when body_rx >= content_length; caller checks this after XREQUEST_CANCEL
-    void*           real_user;
-    xreq_callback_t real_cb;
-};
+    size_t    header_buffer_len;
+    char      header_buffer[XREQ_HDR_BUF_CAP]; // raw bytes accumulated until header end is found
+    size_t    total_bytes_received;            // total response bytes seen
+    ptrdiff_t content_length;                  // -1 = no Content-Length header; >= 0 once parsed
+    size_t    body_bytes_received;             // body bytes received after the header block
+    int       header_done;                     // 1 once \r\n\r\n is located in header_buffer
+    int       response_done;                   // 1 when body_bytes_received >= content_length
+} XRequestSendContext;
 
-static int xreq_frame_cb(void* user, const void* data, unsigned size)
+// Returns 1 when all expected data is received
+static int xreq_frame_update(XRequestSendContext* f, const void* data, unsigned size)
 {
-    struct xreq_frame* f = (struct xreq_frame*)user;
-
-    int ret = f->real_cb(f->real_user, data, size);
-    if (ret != XREQUEST_CONTINUE)
-        return ret;
-
     if (!data || !size)
-        return XREQUEST_CONTINUE;
+        return f->response_done;
 
-    f->total_rx += size;
+    f->total_bytes_received += size;
 
-    if (!f->hdr_done)
+    if (!f->header_done)
     {
-        size_t avail = XREQ_HDR_BUF_CAP - 1 - f->hbuf_len;
+        size_t avail = XREQ_HDR_BUF_CAP - 1 - f->header_buffer_len;
         size_t copy  = size < avail ? size : avail;
-        memcpy(f->hbuf + f->hbuf_len, data, copy);
-        f->hbuf_len          += copy;
-        f->hbuf[f->hbuf_len]  = '\0';
+        memcpy(f->header_buffer + f->header_buffer_len, data, copy);
+        f->header_buffer_len                   += copy;
+        f->header_buffer[f->header_buffer_len]  = '\0';
 
-        char* hend = strstr(f->hbuf, "\r\n\r\n");
+        char* hend = strstr(f->header_buffer, "\r\n\r\n");
         if (hend)
         {
-            f->hdr_done     = 1;
-            size_t hdr_size = (size_t)(hend - f->hbuf) + 4;
-            f->body_rx      = f->total_rx - hdr_size;
+            f->header_done         = 1;
+            size_t hdr_size        = (size_t)(hend - f->header_buffer) + 4;
+            f->body_bytes_received = f->total_bytes_received - hdr_size;
 
             // Scan for Content-Length header (case-insensitive)
-            char* p = f->hbuf;
+            char* p = f->header_buffer;
             while (p < hend)
             {
                 if (xreq_strnicmp(p, "content-length:", 15) == 0)
@@ -239,16 +232,14 @@ static int xreq_frame_cb(void* user, const void* data, unsigned size)
     }
     else
     {
-        f->body_rx += size;
+        f->body_bytes_received += size;
     }
 
-    if (f->hdr_done && f->content_length >= 0 && f->body_rx >= (size_t)f->content_length)
+    if (f->header_done && f->content_length >= 0 && f->body_bytes_received >= (size_t)f->content_length)
     {
-        f->resp_done = 1;
-        return XREQUEST_CANCEL; // signals the recv loop to stop; caller checks resp_done
+        f->response_done = 1;
     }
-
-    return XREQUEST_CONTINUE;
+    return f->response_done;
 }
 
 #ifdef __APPLE__
@@ -668,18 +659,16 @@ XRequestError xrequest_send(XRequestContext* ctx, const char* req, unsigned reql
         return XREQUEST_ERROR_CONNECTION_FAILED;
     }
 
-    int               timed_out = 0;
-    int               cancelled = 0;
-    OSStatus          ortn      = noErr;
-    struct xreq_frame frame     = {0};
-    frame.real_cb               = cb;
-    frame.real_user             = user_ptr;
-    frame.content_length        = -1;
+    int                 timed_out = 0;
+    int                 cancelled = 0;
+    OSStatus            ortn      = noErr;
+    XRequestSendContext send_ctx  = {0};
+    send_ctx.content_length       = -1;
 
     ctx->poll_user = user_ptr;
     ctx->poll_cb   = cb;
 
-    if (xreq_frame_cb(&frame, NULL, 0) != XREQUEST_CONTINUE)
+    if (cb(user_ptr, NULL, 0) != XREQUEST_CONTINUE)
         return XREQUEST_ERROR_USER_CANCELLED;
 
     XREQ_PRINT("SSL handshake complete; Sending request message...");
@@ -693,7 +682,7 @@ XRequestError xrequest_send(XRequestContext* ctx, const char* req, unsigned reql
         goto done;
     }
 
-    if (xreq_frame_cb(&frame, NULL, 0) != XREQUEST_CONTINUE)
+    if (cb(user_ptr, NULL, 0) != XREQUEST_CONTINUE)
     {
         ortn = errSecUserCanceled;
         goto done;
@@ -704,7 +693,7 @@ XRequestError xrequest_send(XRequestContext* ctx, const char* req, unsigned reql
         uint8  resbuf[4096]; // decrypted response
         size_t resbuflen;
         size_t avail;
-        while (ortn == noErr)
+        while (ortn == noErr && send_ctx.response_done == 0)
         {
             resbuflen = 0;
             avail     = 0;
@@ -775,8 +764,9 @@ XRequestError xrequest_send(XRequestContext* ctx, const char* req, unsigned reql
 
             if (resbuflen > 0)
             {
-                int should_continue = xreq_frame_cb(&frame, resbuf, resbuflen);
-                if (should_continue != XREQUEST_CONTINUE)
+                int should_cancel = cb(user_ptr, resbuf, (unsigned)resbuflen);
+                int completed     = xreq_frame_update(&send_ctx, resbuf, (unsigned)resbuflen);
+                if (should_cancel == XREQUEST_CANCEL && !completed)
                     ortn = errSecUserCanceled;
             }
         }
@@ -796,7 +786,7 @@ done:
     }
     if (ortn == errSecUserCanceled)
     {
-        if (frame.resp_done)
+        if (send_ctx.response_done)
             return XREQUEST_ERROR_NONE;
         return XREQUEST_ERROR_USER_CANCELLED;
     }
@@ -1342,10 +1332,8 @@ XRequestError xrequest_send(XRequestContext* ctx, const char* req, unsigned reql
     ctx->poll_user = user_ptr;
     ctx->poll_cb   = cb;
 
-    struct xreq_frame frame = {0};
-    frame.real_cb           = cb;
-    frame.real_user         = user_ptr;
-    frame.content_length    = -1;
+    XRequestSendContext send_ctx = {0};
+    send_ctx.content_length      = -1;
 
     XREQ_PRINT("Sending HTTP request");
 
@@ -1421,16 +1409,17 @@ XRequestError xrequest_send(XRequestContext* ctx, const char* req, unsigned reql
 
     XREQ_PRINT("Receiving HTTP response");
     // Write the full HTTP response to file.
-    while (ctx->state == TLS_STATE_CONNECTED && err == XREQUEST_ERROR_NONE && !frame.resp_done)
+    while (ctx->state == TLS_STATE_CONNECTED && err == XREQUEST_ERROR_NONE && send_ctx.response_done == 0)
     {
         // Read ciphertext data from the TCP socket.
         xrequest_recv(ctx);
 
         // Buffer may be full
-        while (ctx->received && ctx->state == TLS_STATE_CONNECTED && err == XREQUEST_ERROR_NONE)
+        while (ctx->received && ctx->state == TLS_STATE_CONNECTED && err == XREQUEST_ERROR_NONE &&
+               send_ctx.response_done == 0)
         {
-            int       size       = 0;
-            SecBuffer buffers[4] = {0};
+            unsigned int size       = 0;
+            SecBuffer    buffers[4] = {0};
             XREQ_ASSERT(ctx->sizes.cBuffers == ARRAYSIZE(buffers));
 
             buffers[0].BufferType = SECBUFFER_DATA;
@@ -1464,26 +1453,25 @@ XRequestError xrequest_send(XRequestContext* ctx, const char* req, unsigned reql
                 XREQ_ASSERT(buffers[1].BufferType == SECBUFFER_DATA);
                 XREQ_ASSERT(buffers[2].BufferType == SECBUFFER_STREAM_TRAILER);
 
-                char* decrypted = (char*)buffers[1].pvBuffer;
-                size            = buffers[1].cbBuffer;
-
-                // Byte count used from incoming buffer to decrypt current packet.
-                int used = ctx->received - (buffers[3].BufferType == SECBUFFER_EXTRA ? buffers[3].cbBuffer : 0);
+                const char* decrypted = (char*)buffers[1].pvBuffer;
+                size                  = buffers[1].cbBuffer;
 
                 // Consume decrypted buffer
                 if (decrypted)
                 {
-                    int cb_retcode = xreq_frame_cb(&frame, decrypted, size);
+                    int should_cancel = cb(user_ptr, decrypted, size);
+                    int completed     = xreq_frame_update(&send_ctx, decrypted, size);
 
+                    // Byte count used from incoming buffer to decrypt current packet.
+                    int used = ctx->received - (buffers[3].BufferType == SECBUFFER_EXTRA ? buffers[3].cbBuffer : 0);
                     // Remove ciphertext from incoming buffer so next time it starts from beginning.
                     memmove(ctx->incoming, ctx->incoming + used, ctx->received - used);
                     ctx->received -= used;
 
-                    if (cb_retcode != XREQUEST_CONTINUE)
+                    if (should_cancel == XREQUEST_CANCEL && !completed)
                     {
-                        err = frame.resp_done ? XREQUEST_ERROR_NONE : XREQUEST_ERROR_USER_CANCELLED;
-                        if (!frame.resp_done)
-                            XREQ_PRINT("Cancelled");
+                        err = XREQUEST_ERROR_USER_CANCELLED;
+                        XREQ_PRINT("Cancelled");
                         break;
                     }
                 }
