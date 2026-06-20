@@ -156,6 +156,7 @@ static int _xrequest_break_helper = 0;
 #endif
 #endif // !XREQ_ASSERT
 
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -410,7 +411,6 @@ OSStatus SocketRead(
         if (rrtn > 0)
         {
             bytesRead = rrtn;
-            rtn       = errSSLWouldBlock;
         }
         else if (rrtn == 0)
         {
@@ -717,10 +717,12 @@ XRequestError xrequest_send(XRequestContext* ctx, const char* req, unsigned reql
                         goto done;
                     }
                     fd_set         fds;
-                    struct timeval tv = {0, XREQ_POLL_FREQUENCY_MS * 1000};
+                    struct timeval tv;
                     FD_ZERO(&fds);
                     FD_SET(ctx->sock, &fds);
-                    int ready = select(ctx->sock + 1, &fds, NULL, NULL, &tv);
+                    tv.tv_sec  = 0;
+                    tv.tv_usec = 100000;
+                    int ready  = select(ctx->sock + 1, &fds, NULL, NULL, &tv);
                     if (ready > 0)
                     {
                         socket_ready = 1;
