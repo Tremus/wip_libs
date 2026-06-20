@@ -46,6 +46,10 @@ it appeared to fix this users problems.
 With these settings I haven't had any more Windows problems in almost a year.
 I don't recall ever having a user report a bug on OSX.
 
+Another important change I made to Randy Gauls lib is that this library is built around blocking calls, so you can't
+poll for new data on your main thread like could in his lib, and the API is drastically simplied to just "xrequest(...)"
+(easy API) or "ctx = xrequest_init(...) > xrequest_send(ctx, ...) > xrequest_deinit(ctx)" (medium API)
+
 COMPILING:
 Add "#define XHL_REQUEST_IMPL" before including in **only one** of your source files
 
@@ -101,9 +105,12 @@ typedef struct XRequestContext XRequestContext;
 
 // Resolves hostname, opens TCP socket, and completes TLS handshake.
 // Returns NULL on failure. On success, call xrequest_send one or more times, then xrequest_deinit.
+// cb is polled every 100ms during blocking waits; return XREQUEST_CANCEL to abort.
 XRequestContext* xrequest_init(
-    const char* hostname, // eg. www.google.com
-    int         port);            // eg. 443
+    const char*     hostname, // eg. www.google.com
+    int             port,     // eg. 443
+    void*           user,     // ptr passed to callback
+    xreq_callback_t cb);      // Callback — polled every 100ms to check for cancellation
 
 // Sends one HTTP request and streams the response via cb.
 // The TLS session remains open; may be called multiple times on the same ctx.
@@ -158,7 +165,15 @@ static int _xrequest_break_helper = 0;
 #define xreq_strnicmp(a, b, n) strncasecmp((a), (b), (n))
 #endif
 
+#ifndef XREQ_TIMEOUT_DURATION_MS
+#define XREQ_TIMEOUT_DURATION_MS 20000
+#endif
+#ifndef XREQ_POLL_FREQUENCY_MS
+#define XREQ_POLL_FREQUENCY_MS 100
+#endif
+#ifndef XREQ_HDR_BUF_CAP
 #define XREQ_HDR_BUF_CAP 8192
+#endif
 
 // Wraps the caller's callback to detect end-of-response via Content-Length,
 // allowing xrequest_send to stop reading without waiting for the connection to close.
@@ -166,11 +181,11 @@ struct xreq_frame
 {
     char            hbuf[XREQ_HDR_BUF_CAP]; // raw bytes accumulated until header end is found
     size_t          hbuf_len;
-    size_t          total_rx;  // total response bytes seen by callback
-    int             hdr_done;  // 1 once \r\n\r\n is located in hbuf
-    long            clen;      // -1 = no Content-Length header; >= 0 once parsed
-    size_t          body_rx;   // body bytes received after the header block
-    int             resp_done; // 1 when body_rx >= clen; caller checks this after XREQUEST_CANCEL
+    size_t          total_rx;       // total response bytes seen by callback
+    ptrdiff_t       content_length; // -1 = no Content-Length header; >= 0 once parsed
+    size_t          body_rx;        // body bytes received after the header block
+    int             hdr_done;       // 1 once \r\n\r\n is located in hbuf
+    int             resp_done;      // 1 when body_rx >= content_length; caller checks this after XREQUEST_CANCEL
     void*           real_user;
     xreq_callback_t real_cb;
 };
@@ -212,7 +227,7 @@ static int xreq_frame_cb(void* user, const void* data, unsigned size)
                     p += 15;
                     while (*p == ' ' || *p == '\t')
                         p++;
-                    f->clen = atol(p);
+                    f->content_length = (ptrdiff_t)atol(p);
                     break;
                 }
                 char* nl = (char*)memchr(p, '\n', (size_t)(hend - p));
@@ -227,7 +242,7 @@ static int xreq_frame_cb(void* user, const void* data, unsigned size)
         f->body_rx += size;
     }
 
-    if (f->hdr_done && f->clen >= 0 && f->body_rx >= (size_t)f->clen)
+    if (f->hdr_done && f->content_length >= 0 && f->body_rx >= (size_t)f->content_length)
     {
         f->resp_done = 1;
         return XREQUEST_CANCEL; // signals the recv loop to stop; caller checks resp_done
@@ -482,17 +497,21 @@ OSStatus SocketWrite(SSLConnectionRef connection, const void* data, size_t* data
 
 struct XRequestContext
 {
-    SSLContextRef ssl;
-    int           sock;
-    int           open;   // 1 after TLS handshake succeeds; used by deinit to call SSLClose
-    int           closed; // 1 when server sent TLS close_notify (session no longer usable)
+    SSLContextRef   ssl;
+    int             sock;
+    int             open;   // 1 after TLS handshake succeeds; used by deinit to call SSLClose
+    int             closed; // 1 when server sent TLS close_notify (session no longer usable)
+    void*           poll_user;
+    xreq_callback_t poll_cb;
 };
 
-XRequestContext* xrequest_init(const char* hostname, int port)
+XRequestContext* xrequest_init(const char* hostname, int port, void* user, xreq_callback_t cb)
 {
     XRequestContext* ctx = (XRequestContext*)calloc(1, sizeof(*ctx));
     if (!ctx)
         return NULL;
+    ctx->poll_user = user;
+    ctx->poll_cb   = cb;
 
     OSStatus           ortn = noErr;
     struct sockaddr_in addr = {0};
@@ -649,11 +668,16 @@ XRequestError xrequest_send(XRequestContext* ctx, const char* req, unsigned reql
         return XREQUEST_ERROR_CONNECTION_FAILED;
     }
 
-    OSStatus          ortn  = noErr;
-    struct xreq_frame frame = {0};
-    frame.real_cb           = cb;
-    frame.real_user         = user_ptr;
-    frame.clen              = -1;
+    int               timed_out = 0;
+    int               cancelled = 0;
+    OSStatus          ortn      = noErr;
+    struct xreq_frame frame     = {0};
+    frame.real_cb               = cb;
+    frame.real_user             = user_ptr;
+    frame.content_length        = -1;
+
+    ctx->poll_user = user_ptr;
+    ctx->poll_cb   = cb;
 
     if (xreq_frame_cb(&frame, NULL, 0) != XREQUEST_CONTINUE)
         return XREQUEST_ERROR_USER_CANCELLED;
@@ -691,6 +715,41 @@ XRequestError xrequest_send(XRequestContext* ctx, const char* req, unsigned reql
                 XREQ_PRINT("***Error SSLGetBufferedReadSize: %s", sslGetSSLErrString(ortn));
                 break;
             }
+
+            // If the SSL layer has no buffered data, wait on the socket with cancellation support.
+            if (avail == 0)
+            {
+                int socket_ready = 0;
+                for (int elapsed_ms = 0; elapsed_ms < XREQ_TIMEOUT_DURATION_MS; elapsed_ms += XREQ_POLL_FREQUENCY_MS)
+                {
+                    if (ctx->poll_cb && ctx->poll_cb(ctx->poll_user, NULL, 0) != XREQUEST_CONTINUE)
+                    {
+                        cancelled = 1;
+                        goto done;
+                    }
+                    fd_set         fds;
+                    struct timeval tv = {0, XREQ_POLL_FREQUENCY_MS * 1000};
+                    FD_ZERO(&fds);
+                    FD_SET(ctx->sock, &fds);
+                    int ready = select(ctx->sock + 1, &fds, NULL, NULL, &tv);
+                    if (ready > 0)
+                    {
+                        socket_ready = 1;
+                        break;
+                    }
+                    if (ready < 0)
+                    {
+                        ortn = ioErr;
+                        goto done;
+                    }
+                }
+                if (!socket_ready)
+                {
+                    timed_out = 1;
+                    break;
+                }
+            }
+
             ortn = SSLRead(ctx->ssl, resbuf, sizeof(resbuf), &resbuflen);
 
             // we expect blocking, not an error
@@ -726,6 +785,10 @@ XRequestError xrequest_send(XRequestContext* ctx, const char* req, unsigned reql
     XREQ_PRINT("\nFinished SSLRead with OSStatus %s, errno: %d", sslGetSSLErrString(ortn), errno);
 
 done:
+    if (cancelled)
+        return XREQUEST_ERROR_USER_CANCELLED;
+    if (timed_out)
+        return XREQUEST_ERROR_TIMEOUT;
     if (ortn == errSSLClosedGraceful)
     {
         ctx->closed = 1; // server sent close_notify; session cannot be reused
@@ -791,7 +854,7 @@ void xrequest_deinit(XRequestContext* ctx)
 XRequestError
 xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void* user_ptr, xreq_callback_t cb)
 {
-    XRequestContext* ctx = xrequest_init(hostname, port);
+    XRequestContext* ctx = xrequest_init(hostname, port, user_ptr, cb);
     if (!ctx)
         return XREQUEST_ERROR_CONNECTION_FAILED;
     XRequestError err = xrequest_send(ctx, req, reqlen, user_ptr, cb);
@@ -846,6 +909,8 @@ xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void*
 
 typedef enum TLS_State
 {
+    TLS_STATE_CANCELLED                         = -11,
+    TLS_STATE_TIMEOUT                           = -10,
     TLS_STATE_INVALID_TOKEN                     = -9, // Bad or unsupported cert format.
     TLS_STATE_BAD_CERTIFICATE                   = -8, // Bad or unsupported cert format.
     TLS_STATE_SERVER_ASKED_FOR_CLIENT_CERTS     = -7, // Not supported.
@@ -865,6 +930,10 @@ const char* tls_state_string(TLS_State state)
 {
     switch (state)
     {
+    case TLS_STATE_CANCELLED:
+        return "TLS_STATE_CANCELLED";
+    case TLS_STATE_TIMEOUT:
+        return "TLS_STATE_TIMEOUT";
     case TLS_STATE_INVALID_TOKEN:
         return "TLS_STATE_INVALID_TOKEN";
     case TLS_STATE_BAD_CERTIFICATE:
@@ -898,6 +967,9 @@ struct XRequestContext
 {
     TLS_State state; // Current state of the connection. Negative values are errors.
 
+    void*           poll_user;
+    xreq_callback_t poll_cb;
+
     ADDRINFOW* AddrInfo;
     SOCKET     sock;
     CredHandle handle;
@@ -912,53 +984,54 @@ struct XRequestContext
 // Internal alias so helper functions keep their original parameter types.
 typedef struct XRequestContext TLS_Context;
 
-// Called in a poll-style manner on Windows.
+// Blocks until data arrives, polling every 100ms for cancellation up to 20 seconds.
 static void xrequest_recv(TLS_Context* ctx)
 {
-    fd_set         sockets_to_check;
-    struct timeval timeout;
-
-    FD_ZERO(&sockets_to_check);
-    FD_SET(ctx->sock, &sockets_to_check);
-
-    timeout.tv_sec  = 0;
-    timeout.tv_usec = 0;
-    while (select((int)(ctx->sock + 1), &sockets_to_check, NULL, NULL, &timeout) == 1)
+    for (int elapsed_ms = 0; elapsed_ms < XREQ_TIMEOUT_DURATION_MS; elapsed_ms += XREQ_POLL_FREQUENCY_MS)
     {
-        int buflen = (int)sizeof(ctx->incoming) - ctx->received;
-        XREQ_ASSERT(buflen > 0);
-        int r = recv(ctx->sock, ctx->incoming + ctx->received, buflen, 0);
-        if (r == 0)
+        if (ctx->poll_cb && ctx->poll_cb(ctx->poll_user, NULL, 0) != XREQUEST_CONTINUE)
         {
-            // Server disconnected the socket.
-            ctx->state = TLS_STATE_DISCONNECTED;
-            break;
-        }
-        else if (r == SOCKET_ERROR)
-        {
-            // Socket related error.
-            ctx->state = TLS_STATE_INVALID_SOCKET;
-            break;
-        }
-        else
-        {
-            ctx->received += r;
+            ctx->state = TLS_STATE_CANCELLED;
+            return;
         }
 
-        if (ctx->received == sizeof(ctx->incoming))
+        fd_set         sockets_to_check;
+        struct timeval timeout;
+        FD_ZERO(&sockets_to_check);
+        FD_SET(ctx->sock, &sockets_to_check);
+        timeout.tv_sec  = 0;
+        timeout.tv_usec = 100000;
+        int ready       = select((int)(ctx->sock + 1), &sockets_to_check, NULL, NULL, &timeout);
+        if (ready == SOCKET_ERROR)
         {
-            // XREQ_PRINT("buffer full");
-            break;
+            ctx->state = TLS_STATE_INVALID_SOCKET;
+            return;
+        }
+        if (ready == 1)
+        {
+            int buflen = (int)sizeof(ctx->incoming) - ctx->received;
+            XREQ_ASSERT(buflen > 0);
+            int r = recv(ctx->sock, ctx->incoming + ctx->received, buflen, 0);
+            if (r == 0)
+                ctx->state = TLS_STATE_DISCONNECTED;
+            else if (r == SOCKET_ERROR)
+                ctx->state = TLS_STATE_INVALID_SOCKET;
+            else
+                ctx->received += r;
+            return;
         }
     }
+    ctx->state = TLS_STATE_TIMEOUT;
 }
 
-XRequestContext* xrequest_init(const char* hostname, int port)
+XRequestContext* xrequest_init(const char* hostname, int port, void* user, xreq_callback_t cb)
 {
     XRequestContext* ctx = (XRequestContext*)calloc(1, sizeof(*ctx));
     if (!ctx)
         return NULL;
-    ctx->sock = INVALID_SOCKET;
+    ctx->sock      = INVALID_SOCKET;
+    ctx->poll_user = user;
+    ctx->poll_cb   = cb;
 
     WCHAR HostName[64];
     int   NumChars = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, hostname, -1, HostName, ARRAYSIZE(HostName));
@@ -1068,30 +1141,36 @@ XRequestContext* xrequest_init(const char* hostname, int port)
         }
     }
 
-    // Wait for TCP to connect.
-    while (1)
+    // Wait for TCP to connect (100ms polls up to 20 seconds, with cancellation support).
+    // https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-select
     {
-        // https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-select
-        fd_set sockets_to_check;
+        int connected = 0;
+        for (int elapsed_ms = 0; elapsed_ms < XREQ_TIMEOUT_DURATION_MS; elapsed_ms += XREQ_POLL_FREQUENCY_MS)
+        {
+            if (ctx->poll_cb && ctx->poll_cb(ctx->poll_user, NULL, 0) != XREQUEST_CONTINUE)
+                goto fail;
 
-        FD_ZERO(&sockets_to_check);
-        FD_SET(ctx->sock, &sockets_to_check);
-        int iResult = select((int)(ctx->sock + 1), NULL, &sockets_to_check, NULL, NULL);
-        if (iResult == SOCKET_ERROR)
-        {
-            goto fail;
-        }
-        if (iResult == 0)
-        {
-            // Timeout
-        }
-        if (iResult == 1) // iResult >= 0 means number of sockets
-        {
-            int       opt = -1;
-            socklen_t len = sizeof(opt);
-            if (getsockopt(ctx->sock, SOL_SOCKET, SO_ERROR, (char*)(&opt), &len) >= 0 && opt == 0)
+            fd_set         sockets_to_check;
+            struct timeval timeout;
+            FD_ZERO(&sockets_to_check);
+            FD_SET(ctx->sock, &sockets_to_check);
+            timeout.tv_sec  = 0;
+            timeout.tv_usec = 100000;
+            int iResult     = select((int)(ctx->sock + 1), NULL, &sockets_to_check, NULL, &timeout);
+            if (iResult == SOCKET_ERROR)
+                goto fail;
+            if (iResult == 1)
+            {
+                int       opt = -1;
+                socklen_t len = sizeof(opt);
+                if (!(getsockopt(ctx->sock, SOL_SOCKET, SO_ERROR, (char*)(&opt), &len) >= 0 && opt == 0))
+                    goto fail;
+                connected = 1;
                 break;
+            }
         }
+        if (!connected)
+            goto fail;
     }
 
     // TLS handshake
@@ -1260,10 +1339,13 @@ XRequestError xrequest_send(XRequestContext* ctx, const char* req, unsigned reql
         return XREQUEST_ERROR_CONNECTION_FAILED;
     }
 
+    ctx->poll_user = user_ptr;
+    ctx->poll_cb   = cb;
+
     struct xreq_frame frame = {0};
     frame.real_cb           = cb;
     frame.real_user         = user_ptr;
-    frame.clen              = -1;
+    frame.content_length    = -1;
 
     XREQ_PRINT("Sending HTTP request");
 
@@ -1446,6 +1528,10 @@ XRequestError xrequest_send(XRequestContext* ctx, const char* req, unsigned reql
     // After the server disconnects, there may be lots of remaining data to process
     XREQ_PRINT("State %s", tls_state_string(ctx->state));
 
+    if (err == XREQUEST_ERROR_NONE && ctx->state == TLS_STATE_TIMEOUT)
+        return XREQUEST_ERROR_TIMEOUT;
+    if (err == XREQUEST_ERROR_NONE && ctx->state == TLS_STATE_CANCELLED)
+        return XREQUEST_ERROR_USER_CANCELLED;
     return err;
 }
 
@@ -1517,7 +1603,7 @@ void xrequest_deinit(XRequestContext* ctx)
 XRequestError
 xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void* user_ptr, xreq_callback_t cb)
 {
-    XRequestContext* ctx = xrequest_init(hostname, port);
+    XRequestContext* ctx = xrequest_init(hostname, port, user_ptr, cb);
     if (ctx == NULL)
         return XREQUEST_ERROR_CONNECTION_FAILED;
     XRequestError err = xrequest_send(ctx, req, reqlen, user_ptr, cb);
