@@ -962,6 +962,7 @@ struct XRequestContext
 
     ADDRINFOW* AddrInfo;
     SOCKET     sock;
+    int        security_context_initialised;
     CredHandle handle;
     CtxtHandle context;
 
@@ -1234,6 +1235,7 @@ XRequestContext* xrequest_init(const char* hostname, int port, void* user, xreq_
                 // 2. Check InitializeSecurityContext's return value.
                 if (sec == SEC_E_OK)
                 {
+                    ctx->security_context_initialised = 1;
                     // Successfully completed handshake. TLS tunnel is now operational.
                     QueryContextAttributesW(&ctx->context, SECPKG_ATTR_STREAM_SIZES, &ctx->sizes);
                     ctx->state = TLS_STATE_CONNECTED;
@@ -1307,15 +1309,7 @@ XRequestContext* xrequest_init(const char* hostname, int port, void* user, xreq_
     return ctx;
 
 fail:
-    if (ctx->AddrInfo)
-        FreeAddrInfoW(ctx->AddrInfo);
-    if (ctx->sock != INVALID_SOCKET)
-        closesocket(ctx->sock);
-    if (ctx->context.dwLower || ctx->context.dwUpper)
-        DeleteSecurityContext(&ctx->context);
-    if (ctx->handle.dwLower || ctx->handle.dwUpper)
-        FreeCredentialsHandle(&ctx->handle);
-    free(ctx);
+    xrequest_deinit(ctx);
     return NULL;
 }
 
@@ -1528,7 +1522,7 @@ void xrequest_deinit(XRequestContext* ctx)
     if (!ctx)
         return;
 
-    if (ctx->state >= 0)
+    if (ctx->security_context_initialised)
     {
         DWORD type = SCHANNEL_SHUTDOWN;
 
