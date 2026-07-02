@@ -84,6 +84,7 @@ typedef enum XRequestError
     XREQUEST_ERROR_USER_CANCELLED, // You cancelled the request
     XREQUEST_ERROR_CONNECTION_FAILED,
     XREQUEST_ERROR_TIMEOUT,
+    XREQUEST_ERROR_INCOMPLETE_RESPONSE,
     XREQUEST_ERROR_UNKNOWN,
     XREQUEST_ERROR_COUNT,
 } XRequestError;
@@ -796,6 +797,12 @@ done:
     XREQ_ASSERT(ortn == noErr);
     if (ortn != noErr)
         XREQ_PRINT("[TLS] WARNING: Finished with code %d", ortn);
+
+    if (ortn == noErr && send_ctx.content_length >= 0)
+    {
+        if (send_ctx.content_length != send_ctx.body_bytes_received)
+            return XREQUEST_ERROR_INCOMPLETE_RESPONSE;
+    }
 
     switch (ortn)
     {
@@ -1516,6 +1523,11 @@ XRequestError xrequest_send(XRequestContext* ctx, const char* req, unsigned reql
         return XREQUEST_ERROR_TIMEOUT;
     if (err == XREQUEST_ERROR_NONE && ctx->state == TLS_STATE_CANCELLED)
         return XREQUEST_ERROR_USER_CANCELLED;
+    if (err == XREQUEST_ERROR_NONE && send_ctx.content_length >= 0)
+    {
+        if (send_ctx.content_length != send_ctx.body_bytes_received)
+            return XREQUEST_ERROR_INCOMPLETE_RESPONSE;
+    }
     return err;
 }
 
