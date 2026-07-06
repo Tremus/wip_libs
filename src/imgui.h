@@ -254,6 +254,7 @@ void imgui_end_frame(imgui_context* ctx);
 
 unsigned imgui_get_events_circle(imgui_context* ctx, unsigned uid, imgui_pt pt, float radius);
 unsigned imgui_get_events_rect(imgui_context* ctx, unsigned uid, const imgui_rect* rect);
+unsigned imgui_get_events_triangle(imgui_context* ctx, unsigned uid, imgui_pt p0, imgui_pt p1, imgui_pt p2);
 void     imgui_clear_widget(imgui_context* ctx);
 
 static void imgui_set_scissor(imgui_context* ctx, imgui_rect scissor) { ctx->scissor = scissor; }
@@ -300,6 +301,19 @@ static bool imgui_hittest_circle(imgui_pt pos, imgui_pt centre, float radius)
     float diff_y   = pos.y - centre.y;
     float distance = sqrtf(diff_x * diff_x + diff_y * diff_y);
     return distance < radius;
+}
+
+// Sign-based point-in-triangle test. Winding-order independent.
+static bool imgui_hittest_triangle(imgui_pt pos, imgui_pt p0, imgui_pt p1, imgui_pt p2)
+{
+    float d1 = (pos.x - p1.x) * (p0.y - p1.y) - (p0.x - p1.x) * (pos.y - p1.y);
+    float d2 = (pos.x - p2.x) * (p1.y - p2.y) - (p1.x - p2.x) * (pos.y - p2.y);
+    float d3 = (pos.x - p0.x) * (p2.y - p0.y) - (p2.x - p0.x) * (pos.y - p0.y);
+
+    bool has_neg = (d1 < 0) || (d2 < 0) || (d3 < 0);
+    bool has_pos = (d1 > 0) || (d2 > 0) || (d3 > 0);
+
+    return !(has_neg && has_pos);
 }
 
 static unsigned imgui_hash(const char* str)
@@ -663,6 +677,21 @@ unsigned imgui_get_events_circle(imgui_context* ctx, unsigned uid, imgui_pt pt, 
     bool hover = imgui_hittest_circle(ctx->pos_mouse_move, pt, radius);
     bool down  = imgui_hittest_circle(ctx->pos_mouse_down, pt, radius);
     bool up    = imgui_hittest_circle(ctx->pos_mouse_up, pt, radius);
+
+    hover &= imgui_hittest_rect(ctx->pos_mouse_move, &ctx->scissor);
+    down  &= imgui_hittest_rect(ctx->pos_mouse_down, &ctx->scissor);
+    up    &= imgui_hittest_rect(ctx->pos_mouse_up, &ctx->scissor);
+
+    hover &= ctx->mouse_inside_window;
+
+    return _imgui_get_events(ctx, uid, hover, down, up);
+}
+
+unsigned imgui_get_events_triangle(imgui_context* ctx, unsigned uid, imgui_pt p0, imgui_pt p1, imgui_pt p2)
+{
+    bool hover = imgui_hittest_triangle(ctx->pos_mouse_move, p0, p1, p2);
+    bool down  = imgui_hittest_triangle(ctx->pos_mouse_down, p0, p1, p2);
+    bool up    = imgui_hittest_triangle(ctx->pos_mouse_up, p0, p1, p2);
 
     hover &= imgui_hittest_rect(ctx->pos_mouse_move, &ctx->scissor);
     down  &= imgui_hittest_rect(ctx->pos_mouse_down, &ctx->scissor);
