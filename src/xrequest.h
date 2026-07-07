@@ -1088,10 +1088,11 @@ XRequestContext* xrequest_init(const char* hostname, int port, void* user, xreq_
         goto fail;
     }
 
-    // Set non-blocking IO.
+    // Set non-blocking IO, just for connect(): lets us poll for completion below with cancellation
+    // support instead of blocking the calling thread for the OS's default connect timeout.
     {
         // https://learn.microsoft.com/en-us/windows/win32/api/winsock/nf-winsock-ioctlsocket
-        u_long iMode   = 0;
+        u_long iMode   = 1;
         int    iResult = ioctlsocket(ctx->sock, (long)FIONBIO, &iMode);
         XREQ_ASSERT(iResult == 0);
         if (iResult != NO_ERROR)
@@ -1102,14 +1103,30 @@ XRequestContext* xrequest_init(const char* hostname, int port, void* user, xreq_
         }
     }
 
+    // Bound blocking send() calls so a dead/unresponsive peer can't hang the calling thread forever.
+    {
+        DWORD sendTimeoutMs = XREQ_TIMEOUT_DURATION_MS;
+        int   iResult =
+            setsockopt(ctx->sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&sendTimeoutMs, sizeof(sendTimeoutMs));
+        XREQ_ASSERT(iResult == 0);
+        if (iResult != NO_ERROR)
+        {
+            int error = WSAGetLastError();
+            XREQ_PRINT("[TLS] Error - setsockopt(SO_SNDTIMEO) returned: %d", error);
+            goto fail;
+        }
+    }
+
     // Startup the TCP connection.
     // https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-connect
     {
         int err = connect(ctx->sock, ctx->AddrInfo->ai_addr, (int)ctx->AddrInfo->ai_addrlen);
-        XREQ_ASSERT(err == 0);
         if (err == SOCKET_ERROR)
         {
             int error = WSAGetLastError();
+            // WSAEWOULDBLOCK/WSAEINPROGRESS are expected here: the socket is non-blocking for
+            // connect(), so this just means the connection attempt started asynchronously.
+            XREQ_ASSERT(error == WSAEWOULDBLOCK || error == WSAEINPROGRESS);
             if (error != WSAEWOULDBLOCK && error != WSAEINPROGRESS)
             {
                 XREQ_PRINT("[TLS] Error - connect returned: %d", error);
@@ -1171,6 +1188,19 @@ XRequestContext* xrequest_init(const char* hostname, int port, void* user, xreq_
         }
         if (!connected)
             goto fail;
+
+        // TCP connect complete. Switch to blocking IO for the TLS handshake and data phases: those
+        // are bounded by SO_SNDTIMEO (sends) and the select()-based poll loops (recv), so blocking
+        // here doesn't risk an unbounded hang.
+        u_long iMode   = 0;
+        int    iResult = ioctlsocket(ctx->sock, (long)FIONBIO, &iMode);
+        XREQ_ASSERT(iResult == 0);
+        if (iResult != NO_ERROR)
+        {
+            int error = WSAGetLastError();
+            XREQ_PRINT("[TLS] Error - ioctlsocket returned: %d", error);
+            goto fail;
+        }
     }
 
     // TLS handshake
@@ -1385,6 +1415,13 @@ XRequestError xrequest_send(XRequestContext* ctx, const char* req, unsigned reql
                 if (d <= 0)
                 {
                     int error = WSAGetLastError();
+                    if (error == WSAETIMEDOUT)
+                    {
+                        // SO_SNDTIMEO expired: peer isn't accepting data.
+                        ctx->state = TLS_STATE_TIMEOUT;
+                        err        = XREQUEST_ERROR_TIMEOUT;
+                        break;
+                    }
                     if (error != WSAEWOULDBLOCK && error != WSAEINPROGRESS)
                     {
                         // Error sending data to socket, or server disconnected.
@@ -1574,7 +1611,11 @@ void xrequest_deinit(XRequestContext* ctx)
             int   size   = outbuffers[0].cbBuffer;
             while (size != 0)
             {
-                int d   = send(ctx->sock, buffer, size, 0);
+                int d = send(ctx->sock, buffer, size, 0);
+                if (d <= 0)
+                {
+                    break;
+                }
                 buffer += d;
                 size   -= d;
             }
