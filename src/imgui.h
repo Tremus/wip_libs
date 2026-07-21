@@ -180,6 +180,9 @@ typedef struct imgui_context
 
     bool mouse_inside_window;
 
+    // Last known modifiers state
+    unsigned modifiers;
+
     // Roughly tracks how many duplicate frames this library produces
     // If you app receives new events that affect your widgets/display, you should set this number to 0
     // Every call to imgui_end_frame() increments this number
@@ -876,11 +879,13 @@ bool imgui_send_event(imgui_context* ctx, const PWEvent* e)
         ctx->frame_id_mouse_over = 0;
         ctx->uid_mouse_over      = 0;
         ctx->mouse_inside_window = true;
+        ctx->modifiers           = e->mouse.modifiers;
         break;
     case PW_EVENT_MOUSE_MOVE:
         ctx->pos_mouse_move.x            = e->mouse.x;
         ctx->pos_mouse_move.y            = e->mouse.y;
         ctx->frame.modifiers_mouse_move |= e->mouse.modifiers;
+        ctx->modifiers                   = e->mouse.modifiers;
         break;
     case PW_EVENT_MOUSE_SCROLL_WHEEL:
         ctx->frame.delta_mouse_wheel += (int)(e->mouse.y / 120.0f);
@@ -896,6 +901,7 @@ bool imgui_send_event(imgui_context* ctx, const PWEvent* e)
         // free to calculate your own using delta_mouse_wheel
         ctx->frame.delta_scroll.y        += e->mouse.y / 2.0f;
         ctx->frame.modifiers_mouse_wheel |= e->mouse.modifiers;
+        ctx->modifiers                    = e->mouse.modifiers;
         break;
     case PW_EVENT_MOUSE_TOUCHPAD_BEGIN:
     case PW_EVENT_MOUSE_TOUCHPAD_MOVE:
@@ -903,6 +909,7 @@ bool imgui_send_event(imgui_context* ctx, const PWEvent* e)
         ctx->frame.delta_scroll.x     += e->mouse.x;
         ctx->frame.delta_scroll.y     += e->mouse.y;
         ctx->frame.modifiers_touchpad |= e->mouse.modifiers;
+        ctx->modifiers                 = e->mouse.modifiers;
         break;
     case PW_EVENT_MOUSE_LEFT_DOWN:
     case PW_EVENT_MOUSE_RIGHT_DOWN:
@@ -937,6 +944,7 @@ bool imgui_send_event(imgui_context* ctx, const PWEvent* e)
             ctx->mouse_last_drag.y = e->mouse.y;
 
             ctx->frame.modifiers_mouse_down |= e->mouse.modifiers;
+            ctx->modifiers                   = e->mouse.modifiers;
 
             if (e->type == PW_EVENT_MOUSE_LEFT_DOWN)
             {
@@ -1000,17 +1008,22 @@ bool imgui_send_event(imgui_context* ctx, const PWEvent* e)
             ctx->pos_mouse_up.x            = e->mouse.x;
             ctx->pos_mouse_up.y            = e->mouse.y;
             ctx->frame.modifiers_mouse_up |= e->mouse.modifiers;
+            ctx->modifiers                 = e->mouse.modifiers;
         }
         break;
     }
+    case PW_EVENT_KEY_DOWN:
+    case PW_EVENT_KEY_UP:
+        ctx->modifiers = e->key.modifiers;
+        break;
+    case PW_EVENT_TEXT:
+        ctx->modifiers = e->text.modifiers;
+        break;
 
     // TODO
     case PW_EVENT_RESIZE_BEGIN:
     case PW_EVENT_RESIZE_END:
     case PW_EVENT_CONTENT_SCALE_FACTOR_CHANGED:
-    case PW_EVENT_KEY_DOWN:
-    case PW_EVENT_KEY_UP:
-    case PW_EVENT_TEXT:
     case PW_EVENT_KEY_FOCUS_LOST:
     case PW_EVENT_FILE_ENTER:
     case PW_EVENT_FILE_MOVE:
