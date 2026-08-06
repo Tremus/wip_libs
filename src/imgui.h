@@ -995,7 +995,7 @@ bool imgui_send_event(imgui_context* ctx, const PWEvent* e)
                         should_run_callback      &= mdc->callback != NULL;
                         should_run_callback      &= !!(mdc->events & im_event._data);
 
-                        if (ctx->uid_mouse_hold == mdc->uid)
+                        if (should_run_callback)
                         {
                             ret |= mdc->callback(mdc->uptr, mdc->uid, im_event, e);
                             break;
