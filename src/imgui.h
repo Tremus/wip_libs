@@ -138,13 +138,17 @@ typedef union ImguiEvents
 // Handling mouse events at draw time goes against the OS's event consumption model. Things like dragging a file out of
 // a window on macOS can only be done in response to a mouse down event. So we need to support callbacks for the few
 // things that require it.
-typedef bool (*imgui_mousedown_callback_t)(void* uptr, unsigned id);
-typedef struct ImguiMouseDownCallback
+// Currently only supports (IMGUI_EVENT_MOUSE_LEFT_DOWN | IMGUI_EVENT_DRAG_MOVE)
+struct PWEvent;
+enum PWEventType;
+typedef bool (*imgui_event_callback_t)(void* uptr, unsigned uid, ImguiEvents ev, const struct PWEvent* e);
+typedef struct ImguiEventCallback
 {
-    unsigned                   uid;
-    void*                      uptr;
-    imgui_mousedown_callback_t callback;
-} ImguiMouseDownCallback;
+    unsigned               uid;
+    unsigned               events; // Any number of IMGUI_EVENT_ bit flags
+    void*                  uptr;
+    imgui_event_callback_t callback;
+} ImguiEventCallback;
 
 // There is no official init function for this object. Just set the whole thing to 0.
 // If your app responds to resizes at draw time, consider adding 'frame.id |= 1 << PW_EVENT_RESIZE;' on init.
@@ -237,8 +241,8 @@ typedef struct imgui_context
         imgui_pt delta_mouse_move;
     } frame;
 
-    unsigned               mouse_down_callbacks_len;
-    ImguiMouseDownCallback mouse_down_callbacks[32];
+    unsigned           callbacks_len;
+    ImguiEventCallback callbacks[32];
 
 #ifndef NDEBUG
     struct
@@ -250,7 +254,6 @@ typedef struct imgui_context
 #endif
 } imgui_context;
 
-struct PWEvent;
 bool imgui_send_event(imgui_context* ctx, const struct PWEvent* e);
 void imgui_begin_frame(imgui_context* ctx, int window_width, int window_height);
 void imgui_end_frame(imgui_context* ctx);
@@ -267,7 +270,7 @@ static void imgui_clear_scissor(imgui_context* ctx)
 }
 
 // If your widgets REQUIRE mouse down callbacks at event time, call this every frame
-void imgui_push_mousedown_callback(imgui_context* ctx, ImguiMouseDownCallback mdc);
+void imgui_push_callback(imgui_context* ctx, ImguiEventCallback mdc);
 
 typedef enum ImguiDragType
 {
@@ -766,7 +769,7 @@ void imgui_begin_frame(imgui_context* ctx, int window_width, int window_height)
     ctx->frame.delta_mouse_move.x = ctx->last_frame_mouse_move.x - ctx->pos_mouse_move.x;
     ctx->frame.delta_mouse_move.y = ctx->last_frame_mouse_move.y - ctx->pos_mouse_move.y;
 
-    ctx->mouse_down_callbacks_len = 0;
+    ctx->callbacks_len = 0;
 
     ctx->window_width  = window_width;
     ctx->window_height = window_height;
@@ -819,24 +822,26 @@ void imgui_end_frame(imgui_context* ctx)
     memset(&ctx->frame, 0, sizeof(ctx->frame));
 }
 
-void imgui_push_mousedown_callback(imgui_context* ctx, ImguiMouseDownCallback mdc)
+void imgui_push_callback(imgui_context* ctx, ImguiEventCallback mdc)
 {
     PW_ASSERT(mdc.uid);
     PW_ASSERT(mdc.callback);
     if (mdc.uid == 0 || mdc.callback == 0)
         return;
     // Oh dear, did you forget to call imgui_begin_frame()?
-    PW_ASSERT(ctx->mouse_down_callbacks_len < 10000);
+    PW_ASSERT(ctx->callbacks_len < 10000);
 
-    const unsigned cap = sizeof(ctx->mouse_down_callbacks) / sizeof(ctx->mouse_down_callbacks[0]);
-    if (ctx->mouse_down_callbacks_len < cap)
+    const unsigned cap = sizeof(ctx->callbacks) / sizeof(ctx->callbacks[0]);
+    if (ctx->callbacks_len < cap)
     {
-        ctx->mouse_down_callbacks[ctx->mouse_down_callbacks_len++] = mdc;
+        ctx->callbacks[ctx->callbacks_len++] = mdc;
     }
 }
 
 bool imgui_send_event(imgui_context* ctx, const PWEvent* e)
 {
+    bool ret = false;
+
     ctx->num_duplicate_backbuffers  = 0;
     ctx->frame.events              |= 1 << e->type;
 
@@ -886,6 +891,28 @@ bool imgui_send_event(imgui_context* ctx, const PWEvent* e)
         ctx->pos_mouse_move.y            = e->mouse.y;
         ctx->frame.modifiers_mouse_move |= e->mouse.modifiers;
         ctx->modifiers                   = e->mouse.modifiers;
+
+        if (ctx->uid_mouse_over)
+        {
+            for (int i = 0; i < ctx->callbacks_len; i++)
+            {
+                const ImguiEventCallback* mdc = &ctx->callbacks[i];
+
+                ImguiEvents im_event = {._data = IMGUI_EVENT_MOUSE_MOVE};
+                if (ctx->uid_drag == mdc->uid)
+                    im_event._data |= IMGUI_EVENT_DRAG_MOVE;
+
+                bool should_run_callback  = ctx->uid_mouse_over == mdc->uid;
+                should_run_callback      &= mdc->callback != NULL;
+                should_run_callback      &= !!(mdc->events & im_event._data);
+
+                if (should_run_callback)
+                {
+                    ret |= mdc->callback(mdc->uptr, mdc->uid, im_event, e);
+                    break;
+                }
+            }
+        }
         break;
     case PW_EVENT_MOUSE_SCROLL_WHEEL:
         ctx->frame.delta_mouse_wheel += (int)(e->mouse.y / 120.0f);
@@ -959,15 +986,18 @@ bool imgui_send_event(imgui_context* ctx, const PWEvent* e)
 
                 if (ctx->uid_mouse_hold)
                 {
-                    for (int i = 0; i < ctx->mouse_down_callbacks_len; i++)
+                    for (int i = 0; i < ctx->callbacks_len; i++)
                     {
-                        const ImguiMouseDownCallback* mdc = &ctx->mouse_down_callbacks[i];
+                        const ImguiEventCallback* mdc      = &ctx->callbacks[i];
+                        ImguiEvents               im_event = {._data = IMGUI_EVENT_MOUSE_LEFT_DOWN};
+
+                        bool should_run_callback  = ctx->uid_mouse_hold == mdc->uid;
+                        should_run_callback      &= mdc->callback != NULL;
+                        should_run_callback      &= !!(mdc->events & im_event._data);
+
                         if (ctx->uid_mouse_hold == mdc->uid)
                         {
-                            if (mdc->callback)
-                            {
-                                mdc->callback(mdc->uptr, mdc->uid);
-                            }
+                            ret |= mdc->callback(mdc->uptr, mdc->uid, im_event, e);
                             break;
                         }
                     }
@@ -1032,6 +1062,6 @@ bool imgui_send_event(imgui_context* ctx, const PWEvent* e)
         break;
     }
 
-    return false;
+    return ret;
 }
 #endif // IMGUI_IMPL
