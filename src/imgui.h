@@ -578,7 +578,8 @@ unsigned _imgui_get_events(imgui_context* ctx, unsigned uid, bool hover, bool mo
 
     // Drag
     bool is_dragging  = ctx->uid_mouse_hold == uid;
-    is_dragging      &= ctx->uid_drag == 0; // not dragging anything else
+    is_dragging      &= ctx->uid_drag == 0;             // not dragging anything else
+    is_dragging      &= ctx->frame.uid_mouse_up != uid; // not releasing a very short drag, possibly a users mistake
     is_dragging      &= ctx->mouse_hold_type == IMGUI_MOUSE_BUTTON_LEFT;
     if (is_dragging)
     {
