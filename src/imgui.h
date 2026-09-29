@@ -81,12 +81,13 @@ enum // Event flags
 
     IMGUI_EVENT_DRAG_BEGIN = 1 << 17, // Drag source
     IMGUI_EVENT_DRAG_MOVE  = 1 << 18,
-    IMGUI_EVENT_DRAG_END   = 1 << 19,
+    IMGUI_EVENT_DRAGGING   = 1 << 19,
+    IMGUI_EVENT_DRAG_END   = 1 << 20,
 
-    IMGUI_EVENT_DRAG_ENTER = 1 << 20, // Drag target
-    IMGUI_EVENT_DRAG_EXIT  = 1 << 21,
-    IMGUI_EVENT_DRAG_OVER  = 1 << 22,
-    IMGUI_EVENT_DRAG_DROP  = 1 << 23,
+    IMGUI_EVENT_DRAG_ENTER = 1 << 21, // Drag target
+    IMGUI_EVENT_DRAG_EXIT  = 1 << 22,
+    IMGUI_EVENT_DRAG_OVER  = 1 << 23,
+    IMGUI_EVENT_DRAG_DROP  = 1 << 24,
 
     // TODO: file drag & drop, import/export
     // TODO: keyboard events
@@ -126,6 +127,7 @@ typedef union ImguiEvents
 
         unsigned mouse_drag_begin : 1;
         unsigned mouse_drag_moved : 1;
+        unsigned mouse_dragging : 1;
         unsigned mouse_drag_end : 1;
 
         unsigned mouse_drag_enter : 1;
@@ -601,6 +603,9 @@ unsigned _imgui_get_events(imgui_context* ctx, unsigned uid, bool hover, bool mo
 
     if (ctx->frame.uid_drag_end == uid)
         events |= IMGUI_EVENT_DRAG_END;
+
+    if (ctx->frame.uid_drag_end != uid && ctx->uid_drag == uid)
+        events |= IMGUI_EVENT_DRAGGING;
 
     // Release
     enum ImguiMouseButtonType handle_mouse_up = IMGUI_MOUSE_BUTTON_NONE;
