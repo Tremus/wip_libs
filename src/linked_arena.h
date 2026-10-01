@@ -34,7 +34,6 @@ typedef struct LinkedArena
 } LinkedArena;
 
 LinkedArena* linked_arena_create(size_t min_cap);
-LinkedArena* linked_arena_create_ex(void* hint, size_t cap);
 void*        linked_arena_make_hint(LinkedArena* arena);
 void         linked_arena_destroy(LinkedArena* arena);
 void*        linked_arena_alloc_aligned(LinkedArena* arena, size_t size, size_t alignment);

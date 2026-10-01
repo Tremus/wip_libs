@@ -30,39 +30,26 @@ static inline uint64_t linked_arena_align(uint64_t value, uint64_t alignment)
     return (value + mask) & ~mask;
 }
 
-LinkedArena* linked_arena_create_ex(void* hint, size_t cap)
+LinkedArena* linked_arena_create(size_t cap)
 {
-    xassert(cap > sizeof(LinkedArena));
     LinkedArena* arena = NULL;
 
-    size_t alignment = 4096;
-    xvalloc_info(&alignment, 0);
+    if (cap == 0)
+    {
+        // 128mb ADDRESS SPACE allocated, not actually paged
+        cap = (1024 * 1024 * 128);
+    }
+    xassert(cap > sizeof(LinkedArena));
 
+    void*        hint      = NULL;
+    const size_t alignment = 4096;
+    // xvalloc_info(&alignment, 0);
     size_t alloc_size = linked_arena_align(cap, alignment);
 
     arena = xvalloc(hint, alloc_size);
     xassert(arena);
     arena->capacity = alloc_size - sizeof(LinkedArena);
     xassert(arena->capacity > 0);
-
-    return arena;
-}
-
-void* linked_arena_make_hint(LinkedArena* arena)
-{
-    void* hint = arena;
-    if (arena)
-    {
-        size_t offset = arena->capacity + sizeof(LinkedArena);
-        hint          = (char*)hint + offset;
-    }
-    return hint;
-}
-
-LinkedArena* linked_arena_create(size_t init_cap)
-{
-    xassert(init_cap > 0);
-    LinkedArena* arena = linked_arena_create_ex(NULL, init_cap);
 
     return arena;
 }
@@ -106,8 +93,7 @@ void* linked_arena_alloc_aligned(LinkedArena* arena, size_t size, size_t alignme
             if (arena->next == NULL) // Reached the end of the list
             {
                 size_t alloc_size = size > arena->capacity ? (size + sizeof(LinkedArena)) : arena->capacity;
-                void*  hint       = linked_arena_make_hint(arena);
-                arena->next       = linked_arena_create_ex(hint, alloc_size);
+                arena->next       = linked_arena_create(alloc_size);
             }
 
             arena = arena->next;
@@ -131,7 +117,9 @@ void linked_arena_release(LinkedArena* arena, const void* const ptr)
     {
         char* start = (char*)(arena + 1);
         char* end   = start + arena->size;
-        if ((char*)ptr >= start && (char*)ptr < end)
+        // Inclusive end: ptr may be a top-of-stack tag from linked_arena_get_top() that sits exactly at the end of a
+        // full arena, in which case this arena keeps its size and everything further down the chain is released
+        if ((char*)ptr >= start && (char*)ptr <= end)
         {
             size_t alloc_size = (size_t)(end - (char*)ptr);
             xassert(arena->size >= alloc_size);
@@ -143,6 +131,8 @@ void linked_arena_release(LinkedArena* arena, const void* const ptr)
         }
         arena = arena->next;
     }
+    // ptr not found!!!
+    xassert(0);
 }
 
 void linked_arena_clear(LinkedArena* arena)
