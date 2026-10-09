@@ -28,7 +28,7 @@ typedef struct LinkedArena
     size_t capacity;
     size_t size;
 
-    size_t _padding;
+    struct LinkedArena* current; // End of the allocation stack
 
     struct LinkedArena* next;
 } LinkedArena;
@@ -40,6 +40,12 @@ void*        linked_arena_alloc_aligned(LinkedArena* arena, size_t size, size_t 
 static void* linked_arena_alloc(LinkedArena* arena, size_t size) { return linked_arena_alloc_aligned(arena, size, 32); }
 void* linked_arena_alloc_clear(LinkedArena* arena, size_t size); // Additionally zeros returned memory for convenience
 void  linked_arena_release(LinkedArena* arena, const void* const ptr);
+// Tries to realloc in place if the you pass is the last used allocation, otherwise it does an alloc + copy. Not ideal
+void*        linked_arena_resize_aligned(LinkedArena* arena, void* ptr, size_t old_size, size_t new_size, size_t alignment);
+static void* linked_arena_resize(LinkedArena* arena, void* ptr, size_t old_size, size_t new_size)
+{
+    return linked_arena_resize_aligned(arena, ptr, old_size, new_size, 32);
+}
 // Releases all pointers allocated by arena, and arenas linked further down the chain
 void linked_arena_clear(LinkedArena* arena);
 // Destroy unused arenas. Won't destroy first item

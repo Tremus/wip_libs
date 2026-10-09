@@ -49,6 +49,7 @@ LinkedArena* linked_arena_create(size_t cap)
     arena = xvalloc(hint, alloc_size);
     xassert(arena);
     arena->capacity = alloc_size - sizeof(LinkedArena);
+    arena->current  = arena;
     xassert(arena->capacity > 0);
 
     return arena;
@@ -69,13 +70,15 @@ void linked_arena_destroy(LinkedArena* arena)
     }
 }
 
-void* linked_arena_alloc_aligned(LinkedArena* arena, size_t size, size_t alignment)
+void* linked_arena_alloc_aligned(LinkedArena* head, size_t size, size_t alignment)
 {
     xassert(size > 0);
+    xassert(head->current);
     void* ptr = NULL;
 
     size = linked_arena_align(size, alignment);
 
+    LinkedArena* arena = head->current;
     while (ptr == NULL)
     {
         xassert(arena->capacity >= arena->size);
@@ -88,7 +91,7 @@ void* linked_arena_alloc_aligned(LinkedArena* arena, size_t size, size_t alignme
         }
         else
         {
-            arena->size = arena->capacity; // max out arena so new smaller allocs are always from the tail
+            arena->size = arena->capacity; // max out arena so it's really obvious this arena is full
 
             if (arena->next == NULL) // Reached the end of the list
             {
@@ -100,6 +103,7 @@ void* linked_arena_alloc_aligned(LinkedArena* arena, size_t size, size_t alignme
         }
         xassert(arena->next != arena);
     }
+    head->current = arena;
 
     return ptr;
 }
@@ -111,8 +115,10 @@ void* linked_arena_alloc_clear(LinkedArena* arena, size_t size)
     return ptr;
 }
 
-void linked_arena_release(LinkedArena* arena, const void* const ptr)
+void linked_arena_release(LinkedArena* head, const void* const ptr)
 {
+    LinkedArena* prev  = NULL;
+    LinkedArena* arena = head;
     while (arena)
     {
         char* start = (char*)(arena + 1);
@@ -126,17 +132,62 @@ void linked_arena_release(LinkedArena* arena, const void* const ptr)
             arena->size -= alloc_size;
 
             // Linked list items further down the chain may still have allocations
-            linked_arena_clear(arena->next);
+            for (LinkedArena* n = arena->next; n; n = n->next)
+                n->size = 0;
+
+            // If this arena is now empty, the end of the stack is the (full) previous arena. Never leave 'current'
+            // pointing at an empty arena, else linked_arena_prune() could destroy it
+            head->current = (arena->size == 0 && prev) ? prev : arena;
             return;
         }
+        prev  = arena;
         arena = arena->next;
     }
     // ptr not found!!!
     xassert(0);
 }
 
+void* linked_arena_resize_aligned(LinkedArena* arena, void* ptr, size_t old_size, size_t new_size, size_t alignment)
+{
+    xassert(ptr);
+    xassert(new_size > 0);
+    xassert(new_size > old_size);
+
+    size_t old_aligned = linked_arena_align(old_size, alignment);
+    size_t new_aligned = linked_arena_align(new_size, alignment);
+
+    if (new_aligned <= old_aligned)
+        return ptr;
+
+    LinkedArena* top_arena = arena->current;
+
+    char* mem_begin = (char*)(top_arena + 1);
+    char* mem_end   = mem_begin + top_arena->capacity;
+    if ((char*)ptr >= mem_begin && (char*)ptr < mem_end)
+    {
+        // pointer belongs to this arena
+        char* old_val = (char*)ptr + old_aligned;
+        char* top     = mem_begin + top_arena->size;
+        if (old_val == top)
+        {
+            // Pointer passed to function matches the last allocated ptr
+            size_t diff = new_aligned - old_aligned;
+            if (top_arena->size + diff <= top_arena->capacity)
+            {
+                top_arena->size += diff;
+                return ptr;
+            }
+        }
+    }
+
+    void* new_ptr = linked_arena_alloc_aligned(arena, new_size, alignment);
+    memcpy(new_ptr, ptr, old_size);
+    return new_ptr;
+}
+
 void linked_arena_clear(LinkedArena* arena)
 {
+    arena->current = arena;
     while (arena)
     {
         xassert(arena->capacity >= arena->size);
@@ -164,17 +215,6 @@ void linked_arena_prune(LinkedArena* arena)
 
 void* linked_arena_get_top(const LinkedArena* arena)
 {
-    size_t top = (size_t)(arena + 1);
-
-    while (arena)
-    {
-        if (arena->size)
-        {
-            size_t base = (size_t)(arena + 1);
-            top         = base + arena->size;
-        }
-        arena = arena->next;
-    }
-    xassert(top);
-    return (void*)top;
+    const LinkedArena* current = arena->current;
+    return (char*)(current + 1) + current->size;
 }
