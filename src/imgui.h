@@ -89,6 +89,10 @@ enum // Event flags
     IMGUI_EVENT_DRAG_OVER  = 1 << 23,
     IMGUI_EVENT_DRAG_DROP  = 1 << 24,
 
+    IMGUI_EVENT_MAGNIFY_BEGIN  = 1 << 25, // Touchpad pinch
+    IMGUI_EVENT_MAGNIFY_UPDATE = 1 << 26,
+    IMGUI_EVENT_MAGNIFY_END    = 1 << 27,
+
     // TODO: file drag & drop, import/export
     // TODO: keyboard events
     //       NOTE: adding keyboard events seems like a bad move. The parent windows need to know if the event was
@@ -134,6 +138,10 @@ typedef union ImguiEvents
         unsigned mouse_drag_exit : 1;
         unsigned mouse_drag_over : 1;
         unsigned mouse_drag_drop : 1;
+
+        unsigned mouse_magnify_begin : 1;
+        unsigned mouse_magnify_update : 1;
+        unsigned mouse_magnify_end : 1;
     };
 } ImguiEvents;
 
@@ -166,6 +174,7 @@ typedef struct imgui_context
     unsigned uid_mouse_hold;
     unsigned uid_drag;
     unsigned uid_touchpad;
+    unsigned uid_magnify;
 
     unsigned left_click_counter;
     unsigned last_left_click_time;
@@ -236,9 +245,12 @@ typedef struct imgui_context
         unsigned modifiers_mouse_move;
         unsigned modifiers_mouse_wheel; // This probably needs to have its own way to handle ownership of events
         unsigned modifiers_touchpad;
+        unsigned modifiers_magnify;
 
         imgui_pt delta_scroll;
         int      delta_mouse_wheel;
+        // Combined pinch since last frame. Apply as: scale *= 1 + delta_magnify
+        float delta_magnify;
 
         imgui_pt delta_mouse_move;
     } frame;
@@ -366,6 +378,7 @@ void imgui_clear_widget(imgui_context* ctx)
     ctx->uid_mouse_hold            = 0;
     ctx->uid_drag                  = 0;
     ctx->uid_touchpad              = 0;
+    ctx->uid_magnify               = 0;
     ctx->left_click_counter        = 0;
 
     ctx->frame.uid_mouse_down    = 0;
@@ -486,6 +499,17 @@ unsigned _imgui_get_events(imgui_context* ctx, unsigned uid, bool hover, bool mo
         events |= IMGUI_EVENT_TOUCHPAD_MOVE;
     if (ctx->uid_touchpad == uid && (ctx->frame.events & (1 << PW_EVENT_MOUSE_TOUCHPAD_END)))
         events |= IMGUI_EVENT_TOUCHPAD_END;
+
+    // Magnify
+    if (ctx->uid_mouse_over == uid && (ctx->frame.events & (1 << PW_EVENT_MOUSE_MAGNIFY_BEGIN)))
+    {
+        events           |= IMGUI_EVENT_MAGNIFY_BEGIN;
+        ctx->uid_magnify  = uid;
+    }
+    if (ctx->uid_magnify == uid && (ctx->frame.events & (1 << PW_EVENT_MOUSE_MAGNIFY_UPDATE)))
+        events |= IMGUI_EVENT_MAGNIFY_UPDATE;
+    if (ctx->uid_magnify == uid && (ctx->frame.events & (1 << PW_EVENT_MOUSE_MAGNIFY_END)))
+        events |= IMGUI_EVENT_MAGNIFY_END;
 
     // Drag & drop
     const bool is_dragging_something_else = ctx->uid_drag != 0 && ctx->uid_drag != uid;
@@ -787,10 +811,12 @@ void imgui_begin_frame(imgui_context* ctx, int window_width, int window_height)
     ImguiEvents ev1 = (ImguiEvents){.mouse_enter = 1};
     ImguiEvents ev2 = (ImguiEvents){.mouse_left_down = 1, .mouse_left_hold = 1};
     ImguiEvents ev3 = (ImguiEvents){._data = IMGUI_EVENT_MOUSE_WHEEL | IMGUI_EVENT_MOUSE_MOVE};
+    ImguiEvents ev4 = (ImguiEvents){.mouse_magnify_begin = 1, .mouse_magnify_end = 1};
 
     PW_ASSERT(ev1._data == IMGUI_EVENT_MOUSE_ENTER);
     PW_ASSERT(ev2._data == (IMGUI_EVENT_MOUSE_LEFT_DOWN | IMGUI_EVENT_MOUSE_LEFT_HOLD));
     PW_ASSERT(ev3.mouse_wheel && ev3.mouse_moved);
+    PW_ASSERT(ev4._data == (IMGUI_EVENT_MAGNIFY_BEGIN | IMGUI_EVENT_MAGNIFY_END));
 #endif
 }
 
@@ -800,7 +826,9 @@ void imgui_end_frame(imgui_context* ctx)
     ctx->num_duplicate_backbuffers++;
 
     unsigned events = (1 << PW_EVENT_MOUSE_SCROLL_WHEEL) | (1 << PW_EVENT_MOUSE_TOUCHPAD_BEGIN) |
-                      (1 << PW_EVENT_MOUSE_TOUCHPAD_MOVE) | (1 << PW_EVENT_MOUSE_TOUCHPAD_END);
+                      (1 << PW_EVENT_MOUSE_TOUCHPAD_MOVE) | (1 << PW_EVENT_MOUSE_TOUCHPAD_END) |
+                      (1 << PW_EVENT_MOUSE_MAGNIFY_BEGIN) | (1 << PW_EVENT_MOUSE_MAGNIFY_UPDATE) |
+                      (1 << PW_EVENT_MOUSE_MAGNIFY_END);
     const bool hover_changed      = ctx->uid_last_frame_mouse_over != ctx->uid_mouse_over;
     const bool drag_hover_changed = ctx->uid_last_frame_drag_over != ctx->uid_drag_over;
     if ((ctx->frame.events & events) || hover_changed || drag_hover_changed)
@@ -881,6 +909,7 @@ bool imgui_send_event(imgui_context* ctx, const PWEvent* e)
         ctx->uid_drag            = 0;
         ctx->uid_drag_over       = 0;
         ctx->uid_touchpad        = 0;
+        ctx->uid_magnify         = 0;
         ctx->mouse_hold_type     = IMGUI_MOUSE_BUTTON_NONE;
         ctx->mouse_inside_window = false;
         break;
@@ -943,6 +972,16 @@ bool imgui_send_event(imgui_context* ctx, const PWEvent* e)
         ctx->frame.delta_scroll.y     += e->mouse.y;
         ctx->frame.modifiers_touchpad |= e->mouse.modifiers;
         ctx->modifiers                 = e->mouse.modifiers;
+        break;
+    case PW_EVENT_MOUSE_MAGNIFY_BEGIN:
+    case PW_EVENT_MOUSE_MAGNIFY_UPDATE:
+    case PW_EVENT_MOUSE_MAGNIFY_END:
+        ctx->pos_mouse_move.x = e->mouse.x;
+        ctx->pos_mouse_move.y = e->mouse.y;
+        // Compose with deltas already received this frame: (1 + a) * (1 + b) - 1
+        ctx->frame.delta_magnify     += e->mouse.magnification * (1 + ctx->frame.delta_magnify);
+        ctx->frame.modifiers_magnify |= e->mouse.modifiers;
+        ctx->modifiers                = e->mouse.modifiers;
         break;
     case PW_EVENT_MOUSE_LEFT_DOWN:
     case PW_EVENT_MOUSE_RIGHT_DOWN:
