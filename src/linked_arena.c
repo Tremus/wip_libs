@@ -21,11 +21,13 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <string.h>
 #include <xhl/alloc.h>
 #include <xhl/debug.h>
+#include <xhl/maths.h>
 
 static inline uint64_t linked_arena_align(uint64_t value, uint64_t alignment)
 {
     xassert(alignment > 0);
-    xassert((alignment & 7) == 0); // Must be aligned to 8 bytes
+    xassert((alignment & 7) == 0);           // Must be aligned to 8 bytes
+    xassert(xm_popcountull(alignment) == 1); // Mask trick to check alignment is a power of 2
     uint64_t mask = alignment - 1;
     return (value + mask) & ~mask;
 }
@@ -82,12 +84,15 @@ void* linked_arena_alloc_aligned(LinkedArena* head, size_t size, size_t alignmen
     while (ptr == NULL)
     {
         xassert(arena->capacity >= arena->size);
-        size_t remaining = arena->capacity - arena->size;
-        if (size <= remaining)
+        // Pad the top of the stack so the returned pointer is aligned
+        uintptr_t top       = (uintptr_t)(arena + 1) + arena->size;
+        uintptr_t aligned   = linked_arena_align(top, alignment);
+        size_t    pad       = aligned - top;
+        size_t    remaining = arena->capacity - arena->size;
+        if (pad + size <= remaining)
         {
-            ptr          = arena + 1;
-            ptr          = (char*)ptr + arena->size;
-            arena->size += size;
+            ptr          = (void*)aligned;
+            arena->size += pad + size;
         }
         else
         {
@@ -95,8 +100,9 @@ void* linked_arena_alloc_aligned(LinkedArena* head, size_t size, size_t alignmen
 
             if (arena->next == NULL) // Reached the end of the list
             {
-                size_t alloc_size = size > arena->capacity ? (size + sizeof(LinkedArena)) : arena->capacity;
-                arena->next       = linked_arena_create(alloc_size);
+                size_t alloc_size_min = size + alignment + sizeof(LinkedArena);
+                size_t alloc_size     = alloc_size_min > arena->capacity ? alloc_size_min : arena->capacity;
+                arena->next           = linked_arena_create(alloc_size);
             }
 
             arena = arena->next;
