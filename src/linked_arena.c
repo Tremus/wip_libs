@@ -21,13 +21,12 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <string.h>
 #include <xhl/alloc.h>
 #include <xhl/debug.h>
-#include <xhl/maths.h>
 
 static inline uint64_t linked_arena_align(uint64_t value, uint64_t alignment)
 {
     xassert(alignment > 0);
-    xassert((alignment & 7) == 0);           // Must be aligned to 8 bytes
-    xassert(xm_popcountull(alignment) == 1); // Mask trick to check alignment is a power of 2
+    xassert((alignment & 7) == 0);               // Must be aligned to 8 bytes
+    xassert((alignment & (alignment - 1)) == 0); // Must be power of 2
     uint64_t mask = alignment - 1;
     return (value + mask) & ~mask;
 }
