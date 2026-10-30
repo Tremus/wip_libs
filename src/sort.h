@@ -63,6 +63,19 @@ static void sort_char(char* a, int N)
 // https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/qsort-s?view=msvc-170
 // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/qsort_r.3.html
 // https://en.cppreference.com/w/c/algorithm/qsort
+#if defined(__linux__)
+struct xqsort_trampoline_ctx
+{
+    int (*compare_func)(void* ctx, void const* a, void const* b);
+    void* ctx;
+};
+static int xqsort_trampoline(const void* a, const void* b, void* arg)
+{
+    struct xqsort_trampoline_ctx* tctx = (struct xqsort_trampoline_ctx*)arg;
+    return tctx->compare_func(tctx->ctx, a, b);
+}
+#endif
+
 static inline void xqsort_s(
     void*              base,
     unsigned long long num_elements,
@@ -86,6 +99,16 @@ static inline void xqsort_s(
         void*         _thunk,
         int (*_compar)(void*, const void*, const void*));
     qsort_r(base, num_elements, size_elements, ctx, compare_func);
+#elif defined(__linux__)
+    // glibc qsort_r takes the context last, both in the call and in the compare function
+    extern void qsort_r(
+        void*         _base,
+        unsigned long _nmemb,
+        unsigned long _size,
+        int (*_compar)(const void*, const void*, void*),
+        void* _arg);
+    struct xqsort_trampoline_ctx tctx = {compare_func, ctx};
+    qsort_r(base, num_elements, size_elements, xqsort_trampoline, &tctx);
 #else
 #error "Platform unsupported"
 #endif
