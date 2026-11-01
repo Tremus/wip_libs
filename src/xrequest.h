@@ -55,7 +55,7 @@ Add "#define XHL_REQUEST_IMPL" before including in **only one** of your source f
 
 LINKING:
 Windows: -lSecur32 -lWs2_32
-macOS: -framework Security
+macOS: -framework Security -framework CoreFoundation
 Linux: -ldl -lpthread on glibc < 2.34. libcurl is loaded at runtime, not linked
 
 SUPPORT:
@@ -804,6 +804,10 @@ done:
     if (ortn != noErr)
         XREQ_PRINT("[TLS] WARNING: Finished with code %d", ortn);
 
+    // No bytes: the server closed without answering, e.g. a dropped keep-alive. Reading stops at Content-Length,
+    // so the previous send never saw the close and left ctx->closed unset
+    if (ortn == noErr && send_ctx.total_bytes_received == 0)
+        return XREQUEST_ERROR_CONNECTION_FAILED;
     if (ortn == noErr && send_ctx.content_length >= 0)
     {
         if (send_ctx.content_length != send_ctx.body_bytes_received)
