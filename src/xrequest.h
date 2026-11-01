@@ -48,7 +48,7 @@ I don't recall ever having a user report a bug on OSX.
 
 Another important change I made to Randy Gauls lib is that this library is built around blocking calls, so you can't
 poll for new data on your main thread like could in his lib, and the API is drastically simplied to just "xrequest(...)"
-(easy API) or "ctx = xrequest_init(...) > xrequest_send(ctx, ...) > xrequest_deinit(ctx)" (medium API)
+(easy API) or "xrequest_init(&ctx, ...) > xrequest_send(ctx, ...) > xrequest_deinit(ctx)" (medium API)
 
 COMPILING:
 Add "#define XHL_REQUEST_IMPL" before including in **only one** of your source files
@@ -56,10 +56,12 @@ Add "#define XHL_REQUEST_IMPL" before including in **only one** of your source f
 LINKING:
 Windows: -lSecur32 -lWs2_32
 macOS: -framework Security
+Linux: -ldl -lpthread on glibc < 2.34. libcurl is loaded at runtime, not linked
 
 SUPPORT:
 Windows: 8.1+
 macOS: 10.2+
+Linux: needs libcurl.so.4 (or libcurl-gnutls.so.4) 7.45+ installed
 */
 
 typedef enum XRequestCallbackResult
@@ -85,6 +87,7 @@ typedef enum XRequestError
     XREQUEST_ERROR_CONNECTION_FAILED,
     XREQUEST_ERROR_TIMEOUT,
     XREQUEST_ERROR_INCOMPLETE_RESPONSE,
+    XREQUEST_ERROR_TLS_UNAVAILABLE, // Linux only. Means libcurl couldn't load
     XREQUEST_ERROR_UNKNOWN,
     XREQUEST_ERROR_COUNT,
 } XRequestError;
@@ -105,13 +108,14 @@ XRequestError xrequest(
 typedef struct XRequestContext XRequestContext;
 
 // Resolves hostname, opens TCP socket, and completes TLS handshake.
-// Returns NULL on failure. On success, call xrequest_send one or more times, then xrequest_deinit.
+// On failure *ctx is NULL. On success *ctx is set: call xrequest_send one or more times, then xrequest_deinit.
 // cb is polled every 100ms during blocking waits; return XREQUEST_CANCEL to abort.
-XRequestContext* xrequest_init(
-    const char*     hostname, // eg. www.google.com
-    int             port,     // eg. 443
-    void*           user,     // ptr passed to callback
-    xreq_callback_t cb);      // Callback — polled every 100ms to check for cancellation
+XRequestError xrequest_init(
+    XRequestContext** ctx,      // out
+    const char*       hostname, // eg. www.google.com
+    int               port,     // eg. 443
+    void*             user,     // ptr passed to callback
+    xreq_callback_t   cb);        // Callback — polled every 100ms to check for cancellation
 
 // Sends one HTTP request and streams the response via cb.
 // The TLS session remains open; may be called multiple times on the same ctx.
@@ -497,11 +501,12 @@ struct XRequestContext
     xreq_callback_t poll_cb;
 };
 
-XRequestContext* xrequest_init(const char* hostname, int port, void* user, xreq_callback_t cb)
+XRequestError xrequest_init(XRequestContext** ctx_out, const char* hostname, int port, void* user, xreq_callback_t cb)
 {
+    *ctx_out             = NULL;
     XRequestContext* ctx = (XRequestContext*)calloc(1, sizeof(*ctx));
     if (!ctx)
-        return NULL;
+        return XREQUEST_ERROR_UNKNOWN;
     ctx->poll_user = user;
     ctx->poll_cb   = cb;
 
@@ -514,7 +519,7 @@ XRequestContext* xrequest_init(const char* hostname, int port, void* user, xreq_
     {
         XREQ_PRINT("gethostbyname failed");
         free(ctx);
-        return NULL;
+        return XREQUEST_ERROR_CONNECTION_FAILED;
     }
 
     memcpy(&addr.sin_addr, ent->h_addr_list[0], sizeof(addr.sin_addr));
@@ -527,7 +532,7 @@ XRequestContext* xrequest_init(const char* hostname, int port, void* user, xreq_
         XREQ_PRINT("connect returned error");
         close(ctx->sock);
         free(ctx);
-        return NULL;
+        return XREQUEST_ERROR_CONNECTION_FAILED;
     }
 
     XREQ_PRINT("connected to server; starting SecureTransport...");
@@ -639,7 +644,8 @@ XRequestContext* xrequest_init(const char* hostname, int port, void* user, xreq_
     }
 
     XREQ_PRINT("SSL handshake complete.");
-    return ctx;
+    *ctx_out = ctx;
+    return XREQUEST_ERROR_NONE;
 
 fail:
     if (ctx->open)
@@ -649,7 +655,7 @@ fail:
     if (ctx->ssl)
         SSLDisposeContext(ctx->ssl);
     free(ctx);
-    return NULL;
+    return XREQUEST_ERROR_CONNECTION_FAILED;
 }
 
 XRequestError xrequest_send(XRequestContext* ctx, const char* req, unsigned reqlen, void* user_ptr, xreq_callback_t cb)
@@ -853,10 +859,10 @@ void xrequest_deinit(XRequestContext* ctx)
 XRequestError
 xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void* user_ptr, xreq_callback_t cb)
 {
-    XRequestContext* ctx = xrequest_init(hostname, port, user_ptr, cb);
-    if (!ctx)
-        return XREQUEST_ERROR_CONNECTION_FAILED;
-    XRequestError err = xrequest_send(ctx, req, reqlen, user_ptr, cb);
+    XRequestContext* ctx = NULL;
+    XRequestError    err = xrequest_init(&ctx, hostname, port, user_ptr, cb);
+    if (err == XREQUEST_ERROR_NONE)
+        err = xrequest_send(ctx, req, reqlen, user_ptr, cb);
     xrequest_deinit(ctx);
     return err;
 }
@@ -1024,11 +1030,12 @@ static void xrequest_recv(TLS_Context* ctx)
     ctx->state = TLS_STATE_TIMEOUT;
 }
 
-XRequestContext* xrequest_init(const char* hostname, int port, void* user, xreq_callback_t cb)
+XRequestError xrequest_init(XRequestContext** ctx_out, const char* hostname, int port, void* user, xreq_callback_t cb)
 {
+    *ctx_out             = NULL;
     XRequestContext* ctx = (XRequestContext*)calloc(1, sizeof(*ctx));
     if (!ctx)
-        return NULL;
+        return XREQUEST_ERROR_UNKNOWN;
     ctx->sock      = INVALID_SOCKET;
     ctx->poll_user = user;
     ctx->poll_cb   = cb;
@@ -1165,7 +1172,10 @@ XRequestContext* xrequest_init(const char* hostname, int port, void* user, xreq_
         for (int elapsed_ms = 0; elapsed_ms < XREQ_TIMEOUT_DURATION_MS; elapsed_ms += XREQ_POLL_FREQUENCY_MS)
         {
             if (ctx->poll_cb && ctx->poll_cb(ctx->poll_user, NULL, 0) != XREQUEST_CONTINUE)
+            {
+                ctx->state = TLS_STATE_CANCELLED;
                 goto fail;
+            }
 
             fd_set         sockets_to_check;
             struct timeval timeout;
@@ -1187,7 +1197,10 @@ XRequestContext* xrequest_init(const char* hostname, int port, void* user, xreq_
             }
         }
         if (!connected)
+        {
+            ctx->state = TLS_STATE_TIMEOUT;
             goto fail;
+        }
 
         // TCP connect complete. Switch to blocking IO for the TLS handshake and data phases: those
         // are bounded by SO_SNDTIMEO (sends) and the select()-based poll loops (recv), so blocking
@@ -1345,11 +1358,19 @@ XRequestContext* xrequest_init(const char* hostname, int port, void* user, xreq_
         goto fail;
 
     XREQ_PRINT("Connected to %s!", hostname);
-    return ctx;
+    *ctx_out = ctx;
+    return XREQUEST_ERROR_NONE;
 
 fail:
+{
+    XRequestError err = XREQUEST_ERROR_CONNECTION_FAILED;
+    if (ctx->state == TLS_STATE_CANCELLED)
+        err = XREQUEST_ERROR_USER_CANCELLED;
+    else if (ctx->state == TLS_STATE_TIMEOUT)
+        err = XREQUEST_ERROR_TIMEOUT;
     xrequest_deinit(ctx);
-    return NULL;
+    return err;
+}
 }
 
 XRequestError xrequest_send(XRequestContext* ctx, const char* req, unsigned reqlen, void* user_ptr, xreq_callback_t cb)
@@ -1640,14 +1661,261 @@ void xrequest_deinit(XRequestContext* ctx)
 XRequestError
 xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void* user_ptr, xreq_callback_t cb)
 {
-    XRequestContext* ctx = xrequest_init(hostname, port, user_ptr, cb);
-    if (ctx == NULL)
-        return XREQUEST_ERROR_CONNECTION_FAILED;
-    XRequestError err = xrequest_send(ctx, req, reqlen, user_ptr, cb);
+    XRequestContext* ctx = NULL;
+    XRequestError    err = xrequest_init(&ctx, hostname, port, user_ptr, cb);
+    if (err == XREQUEST_ERROR_NONE)
+        err = xrequest_send(ctx, req, reqlen, user_ptr, cb);
     xrequest_deinit(ctx);
     return err;
 }
 
 #endif // _WIN32
+
+#ifdef __linux__
+// libcurl is dlopened, hopefully the user hasn't taken it upon themselves to remove curl from their system...
+// curl headers aren't needed, we provide out own function minimal set of function signatures
+#include <dlfcn.h>
+#include <errno.h>
+#include <poll.h>
+#include <pthread.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+
+typedef struct CURL CURL;
+typedef int         CURLcode;
+typedef int64_t     curl_off_t;
+
+#define CURLE_OK                  0
+#define CURLE_OPERATION_TIMEDOUT  28
+#define CURLE_ABORTED_BY_CALLBACK 42
+#define CURLE_RECV_ERROR          56
+#define CURLE_AGAIN               81
+#define CURL_GLOBAL_DEFAULT       3L
+#define CURLOPT_NOPROGRESS        43
+#define CURLOPT_HTTP_VERSION      84
+#define CURLOPT_NOSIGNAL          99
+#define CURLOPT_CONNECT_ONLY      141
+#define CURLOPT_CONNECTTIMEOUT_MS 156
+#define CURLOPT_URL               10002
+#define CURLOPT_XFERINFODATA      10057
+#define CURLOPT_XFERINFOFUNCTION  20219
+#define CURLINFO_ACTIVESOCKET     0x50002C
+#define CURL_HTTP_VERSION_1_1     2L
+
+// clang-format off
+#define XREQ_CURL_FUNCS(X)                                                                                             \
+    X(CURLcode,    curl_global_init,   (long))                                                                         \
+    X(CURL*,       curl_easy_init,     (void))                                                                         \
+    X(CURLcode,    curl_easy_setopt,   (CURL*, int, ...))                                                              \
+    X(CURLcode,    curl_easy_getinfo,  (CURL*, int, ...))                                                              \
+    X(CURLcode,    curl_easy_perform,  (CURL*))                                                                        \
+    X(CURLcode,    curl_easy_send,     (CURL*, const void*, size_t, size_t*))                                          \
+    X(CURLcode,    curl_easy_recv,     (CURL*, void*, size_t, size_t*))                                                \
+    X(void,        curl_easy_cleanup,  (CURL*))                                                                        \
+    X(const char*, curl_easy_strerror, (CURLcode))
+// clang-format on
+
+static struct
+{
+#define X(ret, name, params) ret(*name) params;
+    XREQ_CURL_FUNCS(X)
+#undef X
+} g_xreq_curl; // namespace
+
+static pthread_once_t g_xreq_curl_once = PTHREAD_ONCE_INIT;
+static bool           g_xreq_curl_loaded;
+
+static void xreq_curl_load_once(void)
+{
+    // Never dlclosed, and curl_global_cleanup is never called: the host may be using libcurl too
+    void* lib = dlopen("libcurl.so.4", RTLD_NOW | RTLD_LOCAL);
+    if (!lib) // Debian/Ubuntu ship the GnuTLS build under a different name
+        lib = dlopen("libcurl-gnutls.so.4", RTLD_NOW | RTLD_LOCAL);
+    if (!lib)
+    {
+        XREQ_PRINT("[TLS] Error - libcurl not found");
+        return;
+    }
+
+    g_xreq_curl_loaded = true;
+#define X(ret, name, params)                                                                                           \
+    g_xreq_curl.name = (ret(*) params)dlsym(lib, #name);                                                               \
+    if (!g_xreq_curl.name)                                                                                             \
+        g_xreq_curl_loaded = false;
+    XREQ_CURL_FUNCS(X)
+#undef X
+
+    if (g_xreq_curl_loaded && g_xreq_curl.curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK)
+        g_xreq_curl_loaded = false;
+}
+
+typedef struct XRequestPoll
+{
+    void*           user;
+    xreq_callback_t cb;
+} XRequestPoll;
+
+// Lets the caller cancel during curl_easy_perform (DNS, connect and TLS handshake)
+static int xreq_curl_xferinfo(void* clientp, curl_off_t dltotal, curl_off_t dlnow, curl_off_t ultotal, curl_off_t ulnow)
+{
+    XRequestPoll* poll = (XRequestPoll*)clientp;
+    return poll->cb && poll->cb(poll->user, NULL, 0) != XREQUEST_CONTINUE;
+}
+
+// Waits for the socket to become readable or writable, checking for cancellation every XREQ_POLL_FREQUENCY_MS.
+// Uses poll() rather than select(): a DAW can easily have more than FD_SETSIZE descriptors open
+static XRequestError xreq_curl_wait(CURL* curl, short events, void* user, xreq_callback_t cb)
+{
+    int sock = -1;
+    if (g_xreq_curl.curl_easy_getinfo(curl, CURLINFO_ACTIVESOCKET, &sock) != CURLE_OK || sock < 0)
+        return XREQUEST_ERROR_CONNECTION_FAILED;
+
+    for (int elapsed_ms = 0; elapsed_ms < XREQ_TIMEOUT_DURATION_MS; elapsed_ms += XREQ_POLL_FREQUENCY_MS)
+    {
+        if (cb && cb(user, NULL, 0) != XREQUEST_CONTINUE)
+            return XREQUEST_ERROR_USER_CANCELLED;
+
+        struct pollfd pfd = {.fd = sock, .events = events};
+        int           n   = poll(&pfd, 1, XREQ_POLL_FREQUENCY_MS);
+        if (n > 0)
+            return XREQUEST_ERROR_NONE;
+        if (n < 0 && errno != EINTR)
+            return XREQUEST_ERROR_CONNECTION_FAILED;
+    }
+    return XREQUEST_ERROR_TIMEOUT;
+}
+
+XRequestError xrequest_init(XRequestContext** ctx_out, const char* hostname, int port, void* user, xreq_callback_t cb)
+{
+    *ctx_out = NULL;
+    pthread_once(&g_xreq_curl_once, xreq_curl_load_once);
+    if (!g_xreq_curl_loaded)
+        return XREQUEST_ERROR_TLS_UNAVAILABLE;
+
+    CURL* curl = g_xreq_curl.curl_easy_init();
+    if (!curl)
+        return XREQUEST_ERROR_UNKNOWN;
+
+    char url[512];
+    snprintf(url, sizeof(url), "https://%s:%d/", hostname, port);
+
+    XRequestPoll poll = {user, cb};
+    g_xreq_curl.curl_easy_setopt(curl, CURLOPT_URL, url);
+    g_xreq_curl.curl_easy_setopt(curl, CURLOPT_CONNECT_ONLY, 1L);
+    g_xreq_curl.curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L); // No SIGALRM in someone else's process
+    // Only offer http/1.1 over ALPN. We write HTTP/1.1 ourselves, so the server mustn't pick h2
+    g_xreq_curl.curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+    g_xreq_curl.curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, (long)XREQ_TIMEOUT_DURATION_MS);
+    g_xreq_curl.curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, xreq_curl_xferinfo);
+    g_xreq_curl.curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &poll);
+    g_xreq_curl.curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+
+    CURLcode res = g_xreq_curl.curl_easy_perform(curl);
+    // 'poll' is about to go out of scope
+    g_xreq_curl.curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);
+    g_xreq_curl.curl_easy_setopt(curl, CURLOPT_XFERINFODATA, NULL);
+    if (res != CURLE_OK)
+    {
+        XREQ_PRINT("[TLS] Error - connecting to %s:%d: %s", hostname, port, g_xreq_curl.curl_easy_strerror(res));
+        g_xreq_curl.curl_easy_cleanup(curl);
+        if (res == CURLE_ABORTED_BY_CALLBACK)
+            return XREQUEST_ERROR_USER_CANCELLED;
+        if (res == CURLE_OPERATION_TIMEDOUT)
+            return XREQUEST_ERROR_TIMEOUT;
+        return XREQUEST_ERROR_CONNECTION_FAILED;
+    }
+    *ctx_out = (XRequestContext*)curl;
+    return XREQUEST_ERROR_NONE;
+}
+
+XRequestError xrequest_send(XRequestContext* ctx, const char* req, unsigned reqlen, void* user_ptr, xreq_callback_t cb)
+{
+    CURL*         curl = (CURL*)ctx;
+    XRequestError err  = XREQUEST_ERROR_NONE;
+    CURLcode      res  = CURLE_OK;
+
+    XRequestSendContext send_ctx = {0};
+    send_ctx.content_length      = -1;
+
+    if (cb(user_ptr, NULL, 0) != XREQUEST_CONTINUE)
+        return XREQUEST_ERROR_USER_CANCELLED;
+
+    for (size_t sent = 0; sent < reqlen && err == XREQUEST_ERROR_NONE;)
+    {
+        size_t n  = 0;
+        res       = g_xreq_curl.curl_easy_send(curl, req + sent, reqlen - sent, &n);
+        sent     += n;
+        if (res == CURLE_AGAIN)
+            err = xreq_curl_wait(curl, POLLOUT, user_ptr, cb);
+        else if (res != CURLE_OK)
+            err = XREQUEST_ERROR_CONNECTION_FAILED;
+    }
+
+    // Always try curl_easy_recv before waiting on the socket: the TLS layer may already hold decrypted data
+    while (err == XREQUEST_ERROR_NONE && !send_ctx.response_done)
+    {
+        char   buf[4096];
+        size_t n = 0;
+        res      = g_xreq_curl.curl_easy_recv(curl, buf, sizeof(buf), &n);
+        if (res == CURLE_AGAIN)
+        {
+            err = xreq_curl_wait(curl, POLLIN, user_ptr, cb);
+        }
+        else if (res == CURLE_OK && n == 0) // Server closed the connection
+        {
+            // Closed before answering, eg. an idle keep-alive connection. Fails like the other backends
+            if (send_ctx.total_bytes_received == 0)
+                err = XREQUEST_ERROR_CONNECTION_FAILED;
+            break;
+        }
+        // Many servers close without a TLS close_notify, which OpenSSL 3 reports as an error. Once the response has
+        // started, treat it as a close, like the SecureTransport backend does. The Content-Length check still catches
+        // truncated bodies
+        else if (res == CURLE_RECV_ERROR && send_ctx.total_bytes_received > 0)
+        {
+            res = CURLE_OK;
+            break;
+        }
+        else if (res != CURLE_OK)
+        {
+            err = XREQUEST_ERROR_CONNECTION_FAILED;
+        }
+        else
+        {
+            int should_cancel = cb(user_ptr, buf, (unsigned)n);
+            int completed     = xreq_frame_update(&send_ctx, buf, (unsigned)n);
+            if (should_cancel == XREQUEST_CANCEL && !completed)
+                err = XREQUEST_ERROR_USER_CANCELLED;
+        }
+    }
+
+    if (res != CURLE_OK && res != CURLE_AGAIN)
+        XREQ_PRINT("[TLS] Error - %s", g_xreq_curl.curl_easy_strerror(res));
+
+    if (err == XREQUEST_ERROR_NONE && send_ctx.content_length >= 0 &&
+        send_ctx.body_bytes_received != (size_t)send_ctx.content_length)
+        err = XREQUEST_ERROR_INCOMPLETE_RESPONSE;
+    return err;
+}
+
+void xrequest_deinit(XRequestContext* ctx)
+{
+    if (ctx)
+        g_xreq_curl.curl_easy_cleanup((CURL*)ctx);
+}
+
+XRequestError
+xrequest(const char* hostname, int port, const char* req, unsigned reqlen, void* user_ptr, xreq_callback_t cb)
+{
+    XRequestContext* ctx = NULL;
+    XRequestError    err = xrequest_init(&ctx, hostname, port, user_ptr, cb);
+    if (err == XREQUEST_ERROR_NONE)
+        err = xrequest_send(ctx, req, reqlen, user_ptr, cb);
+    xrequest_deinit(ctx);
+    return err;
+}
+
+#endif // __linux__
 
 #endif // XHL_REQUEST_IMPL
