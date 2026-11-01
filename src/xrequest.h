@@ -1076,7 +1076,6 @@ XRequestError xrequest_init(XRequestContext** ctx_out, const char* hostname, int
         hints.ai_protocol = IPPROTO_TCP;
         // https://learn.microsoft.com/en-us/windows/win32/api/ws2tcpip/nf-ws2tcpip-getaddrinfow
         int SocketError = GetAddrInfoW(HostName, ServiceName, &hints, &ctx->AddrInfo);
-        XREQ_ASSERT(SocketError == 0);
         if (SocketError)
         {
             XREQ_PRINT("[TLS] Error - getaddrinfo returned: %d", SocketError);
@@ -1581,6 +1580,10 @@ XRequestError xrequest_send(XRequestContext* ctx, const char* req, unsigned reql
         return XREQUEST_ERROR_TIMEOUT;
     if (err == XREQUEST_ERROR_NONE && ctx->state == TLS_STATE_CANCELLED)
         return XREQUEST_ERROR_USER_CANCELLED;
+    // No bytes: the server closed without answering, e.g. a dropped keep-alive. Reading stops at Content-Length,
+    // so the previous send never saw the close and left the state CONNECTED
+    if (err == XREQUEST_ERROR_NONE && send_ctx.total_bytes_received == 0)
+        return XREQUEST_ERROR_CONNECTION_FAILED;
     if (err == XREQUEST_ERROR_NONE && send_ctx.content_length >= 0)
     {
         if (send_ctx.content_length != send_ctx.body_bytes_received)
