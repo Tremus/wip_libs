@@ -1100,10 +1100,28 @@ bool imgui_send_event(imgui_context* ctx, const PWEvent* e)
     case PW_EVENT_RESIZE_END:
     case PW_EVENT_CONTENT_SCALE_FACTOR_CHANGED:
     case PW_EVENT_KEY_FOCUS_LOST:
+        break;
+
+    // NOTE: On Windows, no mouse events are sent while files are dragged over the window, because the OS enters a modal
+    // loop. The drag position stands in for the mouse, so widgets still get hover events. Be warned that if you're
+    // hittesting using `uid_mouse_over` you will be getting a single frame lag
+    // TODO: test macOS enters the same modal loop pattern
     case PW_EVENT_FILE_ENTER:
+        ctx->pos_mouse_move.x    = e->file.x;
+        ctx->pos_mouse_move.y    = e->file.y;
+        ctx->frame_id_mouse_over = 0;
+        ctx->uid_mouse_over      = 0;
+        ctx->mouse_inside_window = true;
+        break;
     case PW_EVENT_FILE_MOVE:
     case PW_EVENT_FILE_DROP:
+        ctx->pos_mouse_move.x = e->file.x;
+        ctx->pos_mouse_move.y = e->file.y;
+        break;
     case PW_EVENT_FILE_EXIT:
+        ctx->uid_mouse_over      = 0;
+        ctx->frame_id_mouse_over = 0;
+        ctx->mouse_inside_window = false;
         break;
     }
 
